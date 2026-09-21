@@ -14,7 +14,7 @@
       -webkit-user-select: none;
     }
     body {
-      background-color: #050508;
+      background-color: #040508;
       overflow: hidden;
       width: 100vw;
       height: 100vh;
@@ -42,7 +42,7 @@
     window.addEventListener("resize", resize);
     resize();
 
-    // --- Web Audio SFX ---
+    // --- Audio Synthesizer ---
     const Audio = {
       ctx: null,
       init() {
@@ -55,31 +55,31 @@
         if (!this.ctx) return;
         const osc = this.ctx.createOscillator();
         const gain = this.ctx.createGain();
-        osc.frequency.setValueAtTime(220, this.ctx.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(650, this.ctx.currentTime + 0.18);
+        osc.frequency.setValueAtTime(240, this.ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(680, this.ctx.currentTime + 0.16);
         gain.gain.setValueAtTime(0.2, this.ctx.currentTime);
-        gain.gain.linearRampToValueAtTime(0.01, this.ctx.currentTime + 0.18);
+        gain.gain.linearRampToValueAtTime(0.01, this.ctx.currentTime + 0.16);
         osc.connect(gain);
         gain.connect(this.ctx.destination);
         osc.start();
-        osc.stop(this.ctx.currentTime + 0.18);
+        osc.stop(this.ctx.currentTime + 0.16);
       },
       slide() {
         if (!this.ctx) return;
         const osc = this.ctx.createOscillator();
         const gain = this.ctx.createGain();
         osc.frequency.setValueAtTime(320, this.ctx.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(100, this.ctx.currentTime + 0.15);
+        osc.frequency.exponentialRampToValueAtTime(110, this.ctx.currentTime + 0.14);
         gain.gain.setValueAtTime(0.2, this.ctx.currentTime);
-        gain.gain.linearRampToValueAtTime(0.01, this.ctx.currentTime + 0.15);
+        gain.gain.linearRampToValueAtTime(0.01, this.ctx.currentTime + 0.14);
         osc.connect(gain);
         gain.connect(this.ctx.destination);
         osc.start();
-        osc.stop(this.ctx.currentTime + 0.15);
+        osc.stop(this.ctx.currentTime + 0.14);
       },
       crash() {
         if (!this.ctx) return;
-        const dur = 0.4;
+        const dur = 0.45;
         const buf = this.ctx.createBuffer(1, this.ctx.sampleRate * dur, this.ctx.sampleRate);
         const data = buf.getChannelData(0);
         for (let i = 0; i < buf.length; i++) data[i] = Math.random() * 2 - 1;
@@ -96,52 +96,54 @@
         if (!this.ctx) return;
         const osc = this.ctx.createOscillator();
         const gain = this.ctx.createGain();
-        osc.type = "triangle";
-        osc.frequency.setValueAtTime(523.25, this.ctx.currentTime);
-        osc.frequency.setValueAtTime(659.25, this.ctx.currentTime + 0.07);
-        gain.gain.setValueAtTime(0.15, this.ctx.currentTime);
-        gain.gain.linearRampToValueAtTime(0.01, this.ctx.currentTime + 0.15);
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(587.33, this.ctx.currentTime);
+        osc.frequency.setValueAtTime(880, this.ctx.currentTime + 0.08);
+        gain.gain.setValueAtTime(0.18, this.ctx.currentTime);
+        gain.gain.linearRampToValueAtTime(0.01, this.ctx.currentTime + 0.16);
         osc.connect(gain);
         gain.connect(this.ctx.destination);
         osc.start();
-        osc.stop(this.ctx.currentTime + 0.15);
+        osc.stop(this.ctx.currentTime + 0.16);
       }
     };
 
     // --- Perspective Constants ---
-    const FOV = 280;
-    const CAMERA_HEIGHT = 160;
-    const HORIZON_RATIO = 0.42;
+    const FOV = 320;
+    const CAMERA_HEIGHT = 180;
+    const HORIZON_RATIO = 0.44;
 
-    // --- Game State ---
+    // --- Game Variables ---
     let state = "menu"; // 'menu', 'play', 'dead'
     let distance = 0;
-    let highDistance = localStorage.getItem("sr_high") || 0;
-    let baseSpeed = 16;
-    let speed = baseSpeed;
+    let highDistance = localStorage.getItem("sr_high_v2") || 0;
+    
+    // Gradual progression parameters
+    const START_SPEED = 7.5; // Calibrated slow starter speed (~60 km/h)
+    const MAX_SPEED = 24.0;   // High-speed top tier
+    let currentSpeed = START_SPEED;
 
-    // Player: lanes are -1 (Left), 0 (Center), 1 (Right)
+    // Player Object
     const player = {
       lane: 0,
       targetLane: 0,
       laneX: 0,
-      laneWidth: 130,
+      laneWidth: 120,
       y: 0,
       vy: 0,
       isJumping: false,
       isSliding: false,
       slideTimer: 0,
-      actionHeight: 50
+      runCycle: 0
     };
 
-    let segments = [];
     let obstacles = [];
     let energyShards = [];
 
-    // --- Touch Swipe Detector ---
+    // --- Touch Swipe Control Setup ---
     let touchStartX = 0;
     let touchStartY = 0;
-    const SWIPE_THRESHOLD = 30;
+    const SWIPE_THRESHOLD = 25;
 
     window.addEventListener("touchstart", (e) => {
       Audio.init();
@@ -167,22 +169,20 @@
       } else {
         if (Math.abs(dy) > SWIPE_THRESHOLD) {
           if (dy < 0 && !player.isJumping && !player.isSliding) {
-            // Jump
             player.isJumping = true;
-            player.vy = 16;
+            player.vy = 16.5;
             Audio.jump();
           } else if (dy > 0 && !player.isSliding) {
-            // Slide / Fast drop
             if (player.isJumping) player.vy = -18;
             player.isSliding = true;
-            player.slideTimer = 35;
+            player.slideTimer = 36;
             Audio.slide();
           }
         }
       }
     });
 
-    // Keyboard support for desktop testing
+    // Keyboard controls for desktop testing
     window.addEventListener("keydown", (e) => {
       Audio.init();
       if (state !== "play") {
@@ -194,20 +194,20 @@
       if ((e.code === "ArrowRight" || e.code === "KeyD") && player.targetLane < 1) player.targetLane++;
       if ((e.code === "ArrowUp" || e.code === "KeyW" || e.code === "Space") && !player.isJumping) {
         player.isJumping = true;
-        player.vy = 16;
+        player.vy = 16.5;
         Audio.jump();
       }
       if (e.code === "ArrowDown" || e.code === "KeyS") {
         if (player.isJumping) player.vy = -18;
         player.isSliding = true;
-        player.slideTimer = 35;
+        player.slideTimer = 36;
         Audio.slide();
       }
     });
 
     function resetGame() {
       distance = 0;
-      speed = baseSpeed;
+      currentSpeed = START_SPEED;
       player.lane = 0;
       player.targetLane = 0;
       player.laneX = 0;
@@ -216,42 +216,42 @@
       player.isJumping = false;
       player.isSliding = false;
       player.slideTimer = 0;
+      player.runCycle = 0;
 
       obstacles = [];
       energyShards = [];
 
-      // Pre-seed track
-      for (let z = 600; z < 4000; z += 380) {
+      for (let z = 800; z < 4200; z += 420) {
         spawnTrackFeature(z);
       }
     }
 
     function spawnTrackFeature(z) {
-      const lane = Math.floor(Math.random() * 3) - 1; // -1, 0, or 1
+      const lane = Math.floor(Math.random() * 3) - 1;
       const roll = Math.random();
 
       if (roll < 0.45) {
-        // Barrier (Must JUMP over)
+        // Red Barrier: Must JUMP
         obstacles.push({
           lane,
           z,
           type: "barrier",
           w: 80,
-          h: 40,
+          h: 42,
           y: 0
         });
-      } else if (roll < 0.75) {
-        // High Gate (Must SLIDE under)
+      } else if (roll < 0.78) {
+        // Yellow High Gate: Must SLIDE
         obstacles.push({
           lane,
           z,
           type: "gate",
           w: 80,
-          h: 70,
-          y: 35
+          h: 75,
+          y: 36
         });
       } else {
-        // Energy battery
+        // Energy battery bonus
         energyShards.push({
           lane,
           z,
@@ -260,7 +260,7 @@
       }
     }
 
-    // 3D Projection formula
+    // 3D Perspective Projection
     function project(x, y, z) {
       const horizonY = height * HORIZON_RATIO;
       if (z <= 0) z = 0.1;
@@ -272,21 +272,25 @@
       };
     }
 
-    // --- UPDATE LOOP ---
+    // --- GAME ENGINE UPDATE ---
     function update() {
       if (state !== "play") return;
 
-      distance += speed;
-      speed = baseSpeed + Math.min(distance * 0.003, 16);
+      // Progressive speed curve (smooth ramp up based on meters traversed)
+      currentSpeed = Math.min(MAX_SPEED, START_SPEED + (distance * 0.0018));
+      distance += currentSpeed;
 
-      // Smooth horizontal lane transition
+      // Leg stride animation speed scales with runner speed
+      player.runCycle += currentSpeed * 0.035;
+
+      // Lateral smooth lane transition
       const targetX = player.targetLane * player.laneWidth;
-      player.laneX += (targetX - player.laneX) * 0.28;
+      player.laneX += (targetX - player.laneX) * 0.26;
 
       // Vertical jumping physics
       if (player.isJumping) {
         player.y += player.vy;
-        player.vy -= 1.1; // gravity
+        player.vy -= 1.05; // gravity
         if (player.y <= 0) {
           player.y = 0;
           player.vy = 0;
@@ -294,7 +298,7 @@
         }
       }
 
-      // Slide countdown
+      // Slide duration timer
       if (player.isSliding) {
         player.slideTimer--;
         if (player.slideTimer <= 0) player.isSliding = false;
@@ -303,20 +307,18 @@
       // Update Obstacles
       for (let i = obstacles.length - 1; i >= 0; i--) {
         const obs = obstacles[i];
-        obs.z -= speed;
+        obs.z -= currentSpeed;
 
-        // Collision Window (near camera z=120)
-        if (obs.z < 180 && obs.z > 60) {
-          const inSameLane = Math.abs(player.laneX - obs.lane * player.laneWidth) < 45;
+        // Collision Check Zone (around player's camera depth Z=120)
+        if (obs.z < 170 && obs.z > 70) {
+          const inSameLane = Math.abs(player.laneX - obs.lane * player.laneWidth) < 42;
           if (inSameLane) {
             if (obs.type === "barrier") {
-              // Hit if not jumped high enough
               if (player.y < obs.h - 5) {
                 die();
                 return;
               }
             } else if (obs.type === "gate") {
-              // Hit if not sliding
               if (!player.isSliding || player.y > 10) {
                 die();
                 return;
@@ -325,34 +327,32 @@
           }
         }
 
-        if (obs.z < 20) {
-          obstacles.splice(i, 1);
-        }
+        if (obs.z < 20) obstacles.splice(i, 1);
       }
 
       // Update Collectibles
       for (let i = energyShards.length - 1; i >= 0; i--) {
         const shard = energyShards[i];
-        shard.z -= speed;
+        shard.z -= currentSpeed;
 
-        if (!shard.collected && shard.z < 180 && shard.z > 60) {
-          const inSameLane = Math.abs(player.laneX - shard.lane * player.laneWidth) < 50;
+        if (!shard.collected && shard.z < 170 && shard.z > 70) {
+          const inSameLane = Math.abs(player.laneX - shard.lane * player.laneWidth) < 45;
           if (inSameLane) {
             shard.collected = true;
-            distance += 400; // Bonus meters
+            distance += 350;
             Audio.score();
           }
         }
 
-        if (shard.z < 20) {
-          energyShards.splice(i, 1);
-        }
+        if (shard.z < 20) energyShards.splice(i, 1);
       }
 
-      // Keep spawning obstacles ahead
+      // Continuous track procedural generation
       const furthestZ = obstacles.reduce((max, o) => Math.max(max, o.z), 0);
-      if (furthestZ < 3500) {
-        spawnTrackFeature(furthestZ + 360 + Math.random() * 120);
+      if (furthestZ < 3600) {
+        // Distance between hazards slightly widens or tightens with pace
+        const spacing = Math.max(340, 480 - currentSpeed * 4);
+        spawnTrackFeature(furthestZ + spacing + Math.random() * 80);
       }
     }
 
@@ -362,8 +362,135 @@
       const totalScore = Math.floor(distance / 10);
       if (totalScore > highDistance) {
         highDistance = totalScore;
-        localStorage.setItem("sr_high", highDistance);
+        localStorage.setItem("sr_high_v2", highDistance);
       }
+    }
+
+    // --- DRAWING THE HUMAN CYBER RUNNER ---
+    function drawRunner(x, y, scale) {
+      ctx.save();
+      ctx.translate(x, y);
+
+      const bob = player.isJumping || player.isSliding ? 0 : Math.sin(player.runCycle * 2) * 4 * scale;
+      const swing = Math.sin(player.runCycle);
+
+      if (player.isSliding) {
+        // --- SLIDING POSE: Lean back flat on knees ---
+        ctx.fillStyle = "#00f0ff";
+        ctx.shadowColor = "#00f0ff";
+        ctx.shadowBlur = 15 * scale;
+
+        // Torso tilted low
+        ctx.save();
+        ctx.rotate(0.3);
+        ctx.fillRect(-10 * scale, -18 * scale, 20 * scale, 12 * scale);
+        // Head
+        ctx.beginPath();
+        ctx.arc(-14 * scale, -22 * scale, 6 * scale, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+
+        // Sliding legs forward
+        ctx.strokeStyle = "#00f0ff";
+        ctx.lineWidth = 4 * scale;
+        ctx.beginPath();
+        ctx.moveTo(-5 * scale, -8 * scale);
+        ctx.lineTo(20 * scale, 0);
+        ctx.stroke();
+
+        // Neon friction spark on the floor
+        ctx.fillStyle = "#ffaa00";
+        for (let i = 0; i < 3; i++) {
+          ctx.fillRect((15 + Math.random() * 10) * scale, (Math.random() - 0.5) * 4 * scale, 3 * scale, 3 * scale);
+        }
+      } else if (player.isJumping) {
+        // --- JUMPING POSE: Athletic aerial tuck ---
+        ctx.fillStyle = "#00f0ff";
+        ctx.shadowColor = "#00f0ff";
+        ctx.shadowBlur = 18 * scale;
+
+        // Tucked torso
+        ctx.beginPath();
+        ctx.arc(0, -26 * scale, 12 * scale, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Helmet visor
+        ctx.fillStyle = "#ffffff";
+        ctx.beginPath();
+        ctx.arc(0, -29 * scale, 5 * scale, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Tucked limbs
+        ctx.strokeStyle = "#00f0ff";
+        ctx.lineWidth = 3.5 * scale;
+        ctx.beginPath();
+        ctx.arc(0, -18 * scale, 8 * scale, 0, Math.PI);
+        ctx.stroke();
+      } else {
+        // --- RUNNING POSE: Rear view with moving limbs ---
+        const hipY = (-24 + bob) * scale;
+        const shoulderY = (-44 + bob) * scale;
+        const headY = (-56 + bob) * scale;
+
+        ctx.strokeStyle = "#00f0ff";
+        ctx.fillStyle = "#00f0ff";
+        ctx.shadowColor = "#00f0ff";
+        ctx.shadowBlur = 12 * scale;
+        ctx.lineWidth = 4 * scale;
+        ctx.lineCap = "round";
+
+        // Left Leg
+        ctx.beginPath();
+        ctx.moveTo(-7 * scale, hipY);
+        const lKneeY = hipY + 12 * scale + swing * 4 * scale;
+        const lFootY = hipY + 24 * scale + swing * 8 * scale;
+        ctx.lineTo(-9 * scale, lKneeY);
+        ctx.lineTo(-7 * scale + swing * 6 * scale, Math.min(0, lFootY));
+        ctx.stroke();
+
+        // Right Leg
+        ctx.beginPath();
+        ctx.moveTo(7 * scale, hipY);
+        const rKneeY = hipY + 12 * scale - swing * 4 * scale;
+        const rFootY = hipY + 24 * scale - swing * 8 * scale;
+        ctx.lineTo(9 * scale, rKneeY);
+        ctx.lineTo(7 * scale - swing * 6 * scale, Math.min(0, rFootY));
+        ctx.stroke();
+
+        // Cybernetic Torso
+        ctx.beginPath();
+        ctx.moveTo(-11 * scale, shoulderY);
+        ctx.lineTo(11 * scale, shoulderY);
+        ctx.lineTo(7 * scale, hipY);
+        ctx.lineTo(-7 * scale, hipY);
+        ctx.closePath();
+        ctx.fill();
+
+        // Left Arm (Opposite swing of left leg)
+        ctx.beginPath();
+        ctx.moveTo(-11 * scale, shoulderY);
+        ctx.lineTo(-15 * scale, shoulderY + 10 * scale - swing * 5 * scale);
+        ctx.lineTo(-14 * scale, shoulderY + 18 * scale - swing * 8 * scale);
+        ctx.stroke();
+
+        // Right Arm
+        ctx.beginPath();
+        ctx.moveTo(11 * scale, shoulderY);
+        ctx.lineTo(15 * scale, shoulderY + 10 * scale + swing * 5 * scale);
+        ctx.lineTo(14 * scale, shoulderY + 18 * scale + swing * 8 * scale);
+        ctx.stroke();
+
+        // Head & Cyber Visor
+        ctx.beginPath();
+        ctx.arc(0, headY, 6.5 * scale, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Neon spine glow streak
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(-1.5 * scale, shoulderY + 2 * scale, 3 * scale, 12 * scale);
+      }
+
+      ctx.restore();
     }
 
     // --- RENDER PIPELINE ---
@@ -372,37 +499,37 @@
 
       const horizonY = height * HORIZON_RATIO;
 
-      // Sky gradient
+      // Dark synthwave sky
       const skyGrad = ctx.createLinearGradient(0, 0, 0, horizonY);
-      skyGrad.addColorStop(0, "#080614");
-      skyGrad.addColorStop(1, "#230b3b");
+      skyGrad.addColorStop(0, "#030408");
+      skyGrad.addColorStop(1, "#180826");
       ctx.fillStyle = skyGrad;
       ctx.fillRect(0, 0, width, horizonY);
 
-      // Neon horizon sun
+      // Low Horizon Sun
       ctx.save();
       ctx.beginPath();
-      ctx.arc(width / 2, horizonY, 70, Math.PI, 0);
-      const sunGrad = ctx.createLinearGradient(0, horizonY - 70, 0, horizonY);
+      ctx.arc(width / 2, horizonY, 72, Math.PI, 0);
+      const sunGrad = ctx.createLinearGradient(0, horizonY - 72, 0, horizonY);
       sunGrad.addColorStop(0, "#ff0077");
-      sunGrad.addColorStop(1, "#ffaa00");
+      sunGrad.addColorStop(1, "#ff9900");
       ctx.fillStyle = sunGrad;
       ctx.shadowColor = "#ff0055";
-      ctx.shadowBlur = 30;
+      ctx.shadowBlur = 28;
       ctx.fill();
       ctx.restore();
 
-      // Ground plane
-      ctx.fillStyle = "#090b10";
+      // Ground Void
+      ctx.fillStyle = "#07090f";
       ctx.fillRect(0, horizonY, width, height - horizonY);
 
-      // Perspective Track Lines (3 lanes = 4 rails)
+      // 3 Tracks (4 Neon Rails)
       ctx.lineWidth = 2;
       const railOffsets = [-1.5, -0.5, 0.5, 1.5];
       for (const r of railOffsets) {
-        const pFar = project(r * player.laneWidth, 0, 3500);
-        const pNear = project(r * player.laneWidth, 0, 80);
-        ctx.strokeStyle = "rgba(0, 240, 255, 0.4)";
+        const pFar = project(r * player.laneWidth, 0, 3600);
+        const pNear = project(r * player.laneWidth, 0, 70);
+        ctx.strokeStyle = "rgba(0, 240, 255, 0.35)";
         ctx.beginPath();
         ctx.moveTo(pFar.x, pFar.y);
         ctx.lineTo(pNear.x, pNear.y);
@@ -412,34 +539,34 @@
       // Moving Ground Grid Crosslines
       const gridSpacing = 160;
       const offset = distance % gridSpacing;
-      for (let z = 3500; z > 80; z -= gridSpacing) {
+      for (let z = 3600; z > 70; z -= gridSpacing) {
         const actualZ = z - offset;
-        if (actualZ <= 80) continue;
+        if (actualZ <= 70) continue;
         const pLeft = project(-1.5 * player.laneWidth, 0, actualZ);
         const pRight = project(1.5 * player.laneWidth, 0, actualZ);
-        ctx.strokeStyle = `rgba(140, 0, 255, ${Math.max(0, 1 - actualZ / 3000)})`;
+        ctx.strokeStyle = `rgba(130, 0, 255, ${Math.max(0, 1 - actualZ / 3000)})`;
         ctx.beginPath();
         ctx.moveTo(pLeft.x, pLeft.y);
         ctx.lineTo(pRight.x, pRight.y);
         ctx.stroke();
       }
 
-      // Draw Collectibles & Obstacles from back to front (Painter's algorithm)
-      const renderables = [
+      // Sort items back-to-front for correct 3D depth layering
+      const items = [
         ...obstacles.map(o => ({ ...o, rType: "obs" })),
         ...energyShards.filter(s => !s.collected).map(s => ({ ...s, rType: "shard" }))
       ].sort((a, b) => b.z - a.z);
 
-      for (const item of renderables) {
+      for (const item of items) {
         const xPos = item.lane * player.laneWidth;
 
         if (item.rType === "shard") {
-          const p = project(xPos, 35 + Math.sin(distance * 0.05 + item.z) * 10, item.z);
-          const size = 18 * p.scale;
+          const p = project(xPos, 32 + Math.sin(distance * 0.05 + item.z) * 8, item.z);
+          const size = 16 * p.scale;
           ctx.save();
-          ctx.fillStyle = "#00ffaa";
-          ctx.shadowColor = "#00ffaa";
-          ctx.shadowBlur = 12 * p.scale;
+          ctx.fillStyle = "#00ff99";
+          ctx.shadowColor = "#00ff99";
+          ctx.shadowBlur = 14 * p.scale;
           ctx.beginPath();
           ctx.arc(p.x, p.y, size, 0, Math.PI * 2);
           ctx.fill();
@@ -451,16 +578,14 @@
 
           ctx.save();
           if (item.type === "barrier") {
-            // Jump wall
-            ctx.fillStyle = "#ff2255";
+            ctx.fillStyle = "#ff1a53";
             ctx.shadowColor = "#ff0055";
-            ctx.shadowBlur = 10 * p.scale;
+            ctx.shadowBlur = 12 * p.scale;
             ctx.fillRect(p.x - w / 2, p.y - h, w, h);
             ctx.strokeStyle = "#ffffff";
             ctx.strokeRect(p.x - w / 2, p.y - h, w, h);
           } else {
-            // High Laser Gate
-            ctx.fillStyle = "rgba(255, 200, 0, 0.35)";
+            ctx.fillStyle = "rgba(255, 195, 0, 0.32)";
             ctx.fillRect(p.x - w / 2, p.y - h, w, h);
             ctx.strokeStyle = "#ffcc00";
             ctx.lineWidth = 3 * p.scale;
@@ -470,86 +595,32 @@
         }
       }
 
-      // Draw Player Runner Cyber-Pod
-      const pPlayer = project(player.laneX, player.y, 110);
-      ctx.save();
-      ctx.translate(pPlayer.x, pPlayer.y);
+      // Render the visible character pod at camera depth Z=120
+      const pPlayer = project(player.laneX, player.y, 120);
+      drawRunner(pPlayer.x, pPlayer.y, pPlayer.scale);
 
-      if (player.isSliding) {
-        // Flattened slide form
-        ctx.fillStyle = "#00f0ff";
-        ctx.shadowColor = "#00f0ff";
-        ctx.shadowBlur = 15;
-        ctx.fillRect(-26, -12, 52, 12);
-      } else {
-        // Standing athletic speed pod
-        ctx.fillStyle = "#00f0ff";
-        ctx.shadowColor = "#00f0ff";
-        ctx.shadowBlur = 20;
-
-        // Main chassis
-        ctx.beginPath();
-        ctx.moveTo(0, -42);
-        ctx.lineTo(20, 0);
-        ctx.lineTo(0, -6);
-        ctx.lineTo(-20, 0);
-        ctx.closePath();
-        ctx.fill();
-
-        // Thruster glow
-        ctx.fillStyle = "#ffffff";
-        ctx.beginPath();
-        ctx.arc(0, -6, 5, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      ctx.restore();
-
-      // UI & Instructions
+      // --- Heads Up Display (HUD) ---
       if (state === "play") {
         ctx.fillStyle = "#ffffff";
         ctx.font = "900 22px monospace";
         ctx.textAlign = "left";
-        ctx.fillText(`${Math.floor(distance / 10)} M`, 24, 45);
+        ctx.fillText(`${Math.floor(distance / 10)} M`, 22, 42);
 
-        ctx.font = "12px sans-serif";
-        ctx.fillStyle = "rgba(255, 255, 255, 0.6)";
-        ctx.fillText(`SPEED: ${Math.floor(speed * 10)} KM/H`, 24, 70);
+        // Speedometer Display
+        const kmh = Math.floor(currentSpeed * 8);
+        ctx.font = "bold 13px monospace";
+        ctx.fillStyle = currentSpeed < 12 ? "#00ff99" : currentSpeed < 18 ? "#ffcc00" : "#ff0055";
+        ctx.fillText(`VELOCITY: ${kmh} KM/H`, 22, 65);
       } else if (state === "menu") {
         ctx.fillStyle = "#ffffff";
         ctx.textAlign = "center";
         ctx.font = "900 32px sans-serif";
         ctx.fillText("SHADOW RUNNER", width / 2, height / 2 - 80);
 
-        ctx.font = "bold 15px monospace";
+        ctx.font = "bold 14px monospace";
         ctx.fillStyle = "#00f0ff";
-        ctx.fillText("SWIPE LEFT / RIGHT : SWITCH LANES", width / 2, height / 2 - 20);
+        ctx.fillText("SWIPE LEFT / RIGHT : CHANGE TRACK", width / 2, height / 2 - 20);
         ctx.fillText("SWIPE UP           : JUMP BARRIER", width / 2, height / 2 + 10);
         ctx.fillText("SWIPE DOWN         : SLIDE UNDER GATE", width / 2, height / 2 + 40);
 
-        ctx.fillStyle = "#ff0077";
-        ctx.font = "900 18px sans-serif";
-        ctx.fillText("TAP SCREEN TO RUN", width / 2, height / 2 + 100);
-      } else if (state === "dead") {
-        ctx.fillStyle = "#ff1744";
-        ctx.textAlign = "center";
-        ctx.font = "900 36px sans-serif";
-        ctx.fillText("CRASHED", width / 2, height / 2 - 60);
-
-        ctx.fillStyle = "#ffffff";
-        ctx.font = "bold 20px monospace";
-        ctx.fillText(`DISTANCE: ${Math.floor(distance / 10)} M`, width / 2, height / 2 - 10);
-        ctx.fillText(`RECORD: ${highDistance} M`, width / 2, height / 2 + 25);
-
-        ctx.fillStyle = "#00f0ff";
-        ctx.font = "bold 16px sans-serif";
-        ctx.fillText("TAP TO TRY AGAIN", width / 2, height / 2 + 85);
-      }
-
-      update();
-      requestAnimationFrame(render);
-    }
-
-    render();
-  </script>
-</body>
-</html>
+        ctx.fi
