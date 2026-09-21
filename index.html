@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Orbital Surge</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      touch-action: none; /* Prevents pull-to-refresh & zoom */
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    body {
+      background-color: #0b0f19;
+      overflow: hidden;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      background: radial-gradient(circle at center, #171f30 0%, #07090e 100%);
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas"></canvas>
+
+  <script>
+    const canvas = document.getElementById("gameCanvas");
+    const ctx = canvas.getContext("2d");
+
+    let width, height;
+    function resize() {
+      width = canvas.width = window.innerWidth;
+      height = canvas.height = window.innerHeight;
+    }
+    window.addEventListener("resize", resize);
+    resize();
+
+    // Game state
+    let state = "start"; // 'start', 'playing', 'gameover'
+    let score = 0;
+    let highScore = localStorage.getItem("surge_highscore") || 0;
+    let frames = 0;
+
+    // Player object
+    const player = {
+      x: width / 2,
+      y: height * 0.75,
+      radius: 14,
+      targetX: width / 2,
+      targetY: height * 0.75,
+      speed: 0.25 // Smooth movement factor
+    };
+
+    let hazards = [];
+    let particles = [];
+
+    // Touch & Pointer events
+    function handlePointer(e) {
+      if (state === "start" || state === "gameover") {
+        resetGame();
+        state = "playing";
+        return;
+      }
+      player.targetX = e.clientX;
+      player.targetY = e.clientY;
+    }
+
+    window.addEventListener("pointerdown", handlePointer);
+    window.addEventListener("pointermove", (e) => {
+      if (state === "playing") {
+        player.targetX = e.clientX;
+        player.targetY = e.clientY;
+      }
+    });
+
+    function resetGame() {
+      score = 0;
+      frames = 0;
+      hazards = [];
+      particles = [];
+      player.x = width / 2;
+      player.y = height * 0.75;
+      player.targetX = width / 2;
+      player.targetY = height * 0.75;
+    }
+
+    function spawnHazard() {
+      const radius = 10 + Math.random() * 12;
+      const x = Math.random() * width;
+      const speed = 2.5 + Math.random() * 3 + Math.min(score * 0.05, 5);
+      hazards.push({ x, y: -radius, radius, speed });
+    }
+
+    function createExplosion(x, y, color) {
+      for (let i = 0; i < 16; i++) {
+        particles.push({
+          x,
+          y,
+          vx: (Math.random() - 0.5) * 6,
+          vy: (Math.random() - 0.5) * 6,
+          radius: Math.random() * 3 + 1,
+          alpha: 1,
+          color
+        });
+      }
+    }
+
+    // Main Game Loop
+    function update() {
+      frames++;
+
+      if (state === "playing") {
+        // Smooth player drag
+        player.x += (player.targetX - player.x) * player.speed;
+        player.y += (player.targetY - player.y) * player.speed;
+
+        // Spawn hazards based on frame rate
+        if (frames % Math.max(15, 45 - Math.floor(score / 5)) === 0) {
+          spawnHazard();
+        }
+
+        // Update hazards
+        for (let i = hazards.length - 1; i >= 0; i--) {
+          const h = hazards[i];
+          h.y += h.speed;
+
+          // Check collision with player
+          const dx = player.x - h.x;
+          const dy = player.y - h.y;
+          const dist = Math.hypot(dx, dy);
+
+          if (dist < player.radius + h.radius) {
+            createExplosion(player.x, player.y, "#ff4b4b");
+            state = "gameover";
+            if (score > highScore) {
+              highScore = score;
+              localStorage.setItem("surge_highscore", highScore);
+            }
+          }
+
+          // Off-screen check
+          if (h.y - h.radius > height) {
+            hazards.splice(i, 1);
+            score++;
+          }
+        }
+      }
+
+      // Update explosion particles
+      for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.x += p.vx;
+        p.y += p.vy;
+        p.alpha -= 0.03;
+        if (p.alpha <= 0) particles.splice(i, 1);
+      }
+    }
+
+    function render() {
+      ctx.clearRect(0, 0, width, height);
+
+      // Draw hazards
+      for (const h of hazards) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(h.x, h.y, h.radius, 0, Math.PI * 2);
+        ctx.fillStyle = "#ff3b5c";
+        ctx.shadowColor = "#ff3b5c";
+        ctx.shadowBlur = 10;
+        ctx.fill();
+        ctx.restore();
+      }
+
+      // Draw particles
+      for (const p of particles) {
+        ctx.save();
+        ctx.globalAlpha = p.alpha;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+        ctx.fillStyle = p.color;
+        ctx.fill();
+        ctx.restore();
+      }
+
+      // Draw player
+      if (state === "playing" || state === "start") {
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
+        ctx.fillStyle = "#38ef7d";
+        ctx.shadowColor = "#38ef7d";
+        ctx.shadowBlur = 12;
+        ctx.fill();
+
+        // Inner core
+        ctx.beginPath();
+        ctx.arc(player.x, player.y, player.radius * 0.4, 0, Math.PI * 2);
+        ctx.fillStyle = "#ffffff";
+        ctx.fill();
+        ctx.restore();
+      }
+
+      // Score counter
+      if (state === "playing") {
+        ctx.fillStyle = "rgba(255, 255, 255, 0.85)";
+        ctx.font = "bold 24px monospace";
+        ctx.textAlign = "center";
+        ctx.fillText(`Score: ${score}`, width / 2, 50);
+      }
+
+      // Overlay text
+      if (state === "start") {
+        ctx.fillStyle = "#ffffff";
+        ctx.textAlign = "center";
+        ctx.font = "bold 28px sans-serif";
+        ctx.fillText("ORBITAL SURGE", width / 2, height / 2 - 40);
+
+        ctx.font = "16px sans-serif";
+        ctx.fillStyle = "#8ea2be";
+        ctx.fillText("Drag your finger to steer", width / 2, height / 2);
+        ctx.fillText("Tap anywhere to start", width / 2, height / 2 + 30);
+      } else if (state === "gameover") {
+        ctx.fillStyle = "#ff4b4b";
+        ctx.textAlign = "center";
+        ctx.font = "bold 32px sans-serif";
+        ctx.fillText("GAME OVER", width / 2, height / 2 - 40);
+
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "20px monospace";
+        ctx.fillText(`Final Score: ${score}`, width / 2, height / 2 + 5);
+        ctx.fillText(`Best: ${highScore}`, width / 2, height / 2 + 35);
+
+        ctx.font = "15px sans-serif";
+        ctx.fillStyle = "#8ea2be";
+        ctx.fillText("Tap anywhere to retry", width / 2, height / 2 + 80);
+      }
+
+      requestAnimationFrame(() => {
+        update();
+        render();
+      });
+    }
+
+    render();
+  </script>
+</body>
+</html>
+
