@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>Shadow Runner 3D</title>
+  <title>Temple Escape</title>
   <style>
     * {
       box-sizing: border-box;
@@ -17,18 +17,64 @@
       width: 100%;
       height: 100%;
       overflow: hidden;
-      background: #05060b;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+      background: #120904;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     }
     #canvas {
       display: block;
       width: 100vw;
       height: 100vh;
     }
+    /* Optional On-Screen Mobile Button Bar */
+    .controls-overlay {
+      position: absolute;
+      bottom: 12px;
+      left: 0;
+      width: 100%;
+      display: flex;
+      justify-content: space-between;
+      padding: 0 16px;
+      pointer-events: none;
+      z-index: 10;
+    }
+    .btn-group {
+      display: flex;
+      gap: 12px;
+      pointer-events: auto;
+    }
+    .btn {
+      width: 58px;
+      height: 58px;
+      border-radius: 50%;
+      background: rgba(30, 20, 15, 0.65);
+      border: 2px solid rgba(255, 180, 50, 0.6);
+      color: #ffc44d;
+      font-weight: 900;
+      font-size: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      backdrop-filter: blur(4px);
+    }
+    .btn:active {
+      background: rgba(255, 180, 50, 0.4);
+      transform: scale(0.92);
+    }
   </style>
 </head>
 <body>
   <canvas id="canvas"></canvas>
+
+  <div class="controls-overlay">
+    <div class="btn-group">
+      <div class="btn" id="btnLeft">◀</div>
+      <div class="btn" id="btnRight">▶</div>
+    </div>
+    <div class="btn-group">
+      <div class="btn" id="btnJump">▲</div>
+      <div class="btn" id="btnSlide">▼</div>
+    </div>
+  </div>
 
   <script>
     const canvas = document.getElementById("canvas");
@@ -38,13 +84,13 @@
     let height = window.innerHeight || 640;
 
     function resize() {
-      width = canvas.width = window.innerWidth || document.documentElement.clientWidth || 360;
-      height = canvas.height = window.innerHeight || document.documentElement.clientHeight || 640;
+      width = canvas.width = window.innerWidth || 360;
+      height = canvas.height = window.innerHeight || 640;
     }
     window.addEventListener("resize", resize);
     resize();
 
-    // --- Audio Safe Wrapper ---
+    // --- Lightweight Procedural Audio ---
     const Audio = {
       ctx: null,
       init() {
@@ -53,55 +99,54 @@
             const AC = window.AudioContext || window.webkitAudioContext;
             if (AC) this.ctx = new AC();
           }
-          if (this.ctx && this.ctx.state === "suspended") {
-            this.ctx.resume();
-          }
+          if (this.ctx && this.ctx.state === "suspended") this.ctx.resume();
         } catch (e) {}
       },
-      play(freqStart, freqEnd, duration, type = "sine") {
+      beep(fStart, fEnd, dur, type = "sine", vol = 0.12) {
         try {
           if (!this.ctx) return;
           const osc = this.ctx.createOscillator();
           const gain = this.ctx.createGain();
           osc.type = type;
-          osc.frequency.setValueAtTime(freqStart, this.ctx.currentTime);
-          osc.frequency.exponentialRampToValueAtTime(Math.max(10, freqEnd), this.ctx.currentTime + duration);
-          gain.gain.setValueAtTime(0.15, this.ctx.currentTime);
-          gain.gain.linearRampToValueAtTime(0.01, this.ctx.currentTime + duration);
+          osc.frequency.setValueAtTime(fStart, this.ctx.currentTime);
+          osc.frequency.exponentialRampToValueAtTime(Math.max(20, fEnd), this.ctx.currentTime + dur);
+          gain.gain.setValueAtTime(vol, this.ctx.currentTime);
+          gain.gain.linearRampToValueAtTime(0.01, this.ctx.currentTime + dur);
           osc.connect(gain);
           gain.connect(this.ctx.destination);
           osc.start();
-          osc.stop(this.ctx.currentTime + duration);
+          osc.stop(this.ctx.currentTime + dur);
         } catch (e) {}
       },
-      jump() { this.play(200, 600, 0.15); },
-      slide() { this.play(350, 100, 0.12); },
-      score() { this.play(520, 880, 0.12); },
-      crash() { this.play(180, 40, 0.35, "sawtooth"); }
+      jump() { this.beep(240, 550, 0.18, "sine", 0.15); },
+      slide() { this.beep(300, 120, 0.15, "triangle", 0.12); },
+      coin() { this.beep(650, 1100, 0.1, "sine", 0.15); },
+      crash() { this.beep(160, 40, 0.4, "sawtooth", 0.25); }
     };
 
-    // --- Perspective Constants ---
-    const FOV = 300;
-    const CAMERA_HEIGHT = 170;
-    const HORIZON_RATIO = 0.45;
+    // --- Elevated Temple Run Perspective Constants ---
+    const FOV = 320;
+    const CAMERA_HEIGHT = 280; // High angle looking down
+    const HORIZON_RATIO = 0.32; // Low horizon gives long forward visibility
 
-    // --- Game Variables ---
+    // --- Game Variables (Simplified & Forgiving) ---
     let state = "menu"; // 'menu', 'play', 'dead'
-    let distance = 0;
-    let highDistance = 0;
-    try {
-      highDistance = parseInt(localStorage.getItem("sr_high_v3")) || 0;
-    } catch (e) {}
+    let score = 0;
+    let coins = 0;
+    let highScore = 0;
+    try { highScore = parseInt(localStorage.getItem("tr_high")) || 0; } catch (e) {}
 
-    const START_SPEED = 7;
-    const MAX_SPEED = 23;
+    // Gentle progressive speed
+    const START_SPEED = 5.2; // Slow relaxed jog
+    const MAX_SPEED = 14.5;  // Easy-to-react top speed
     let currentSpeed = START_SPEED;
 
+    // Player (Temple Explorer)
     const player = {
-      lane: 0,
+      lane: 0,        // -1: Left, 0: Mid, 1: Right
       targetLane: 0,
       laneX: 0,
-      laneWidth: 110,
+      laneWidth: 95,
       y: 0,
       vy: 0,
       isJumping: false,
@@ -111,14 +156,32 @@
     };
 
     let obstacles = [];
-    let shards = [];
+    let coinPickups = [];
 
-    // --- Controls ---
-    let touchStartX = 0;
-    let touchStartY = 0;
-    const SWIPE_DIST = 25;
+    // --- Input Actions ---
+    function doLeft() {
+      if (player.targetLane > -1) player.targetLane--;
+    }
+    function doRight() {
+      if (player.targetLane < 1) player.targetLane++;
+    }
+    function doJump() {
+      if (!player.isJumping && !player.isSliding) {
+        player.isJumping = true;
+        player.vy = 15; // floaty, forgiving jump
+        Audio.jump();
+      }
+    }
+    function doSlide() {
+      if (!player.isSliding) {
+        if (player.isJumping) player.vy = -16;
+        player.isSliding = true;
+        player.slideTimer = 38;
+        Audio.slide();
+      }
+    }
 
-    function handleStartInput() {
+    function handleStart() {
       Audio.init();
       if (state !== "play") {
         resetGame();
@@ -128,11 +191,20 @@
       return false;
     }
 
+    // Button controls
+    document.getElementById("btnLeft").addEventListener("pointerdown", (e) => { e.stopPropagation(); handleStart() || doLeft(); });
+    document.getElementById("btnRight").addEventListener("pointerdown", (e) => { e.stopPropagation(); handleStart() || doRight(); });
+    document.getElementById("btnJump").addEventListener("pointerdown", (e) => { e.stopPropagation(); handleStart() || doJump(); });
+    document.getElementById("btnSlide").addEventListener("pointerdown", (e) => { e.stopPropagation(); handleStart() || doSlide(); });
+
+    // Swipe controls
+    let touchStartX = 0;
+    let touchStartY = 0;
     window.addEventListener("touchstart", (e) => {
       const t = e.touches[0];
       touchStartX = t.clientX;
       touchStartY = t.clientY;
-      handleStartInput();
+      handleStart();
     }, { passive: true });
 
     window.addEventListener("touchend", (e) => {
@@ -142,49 +214,32 @@
       const dy = t.clientY - touchStartY;
 
       if (Math.abs(dx) > Math.abs(dy)) {
-        if (Math.abs(dx) > SWIPE_DIST) {
-          if (dx > 0 && player.targetLane < 1) player.targetLane++;
-          else if (dx < 0 && player.targetLane > -1) player.targetLane--;
+        if (Math.abs(dx) > 25) {
+          if (dx > 0) doRight();
+          else doLeft();
         }
       } else {
-        if (Math.abs(dy) > SWIPE_DIST) {
-          if (dy < 0 && !player.isJumping && !player.isSliding) {
-            player.isJumping = true;
-            player.vy = 16;
-            Audio.jump();
-          } else if (dy > 0 && !player.isSliding) {
-            if (player.isJumping) player.vy = -18;
-            player.isSliding = true;
-            player.slideTimer = 34;
-            Audio.slide();
-          }
+        if (Math.abs(dy) > 25) {
+          if (dy < 0) doJump();
+          else doSlide();
         }
       }
     }, { passive: true });
 
-    window.addEventListener("mousedown", (e) => {
-      handleStartInput();
+    // Keyboard support
+    window.addEventListener("keydown", (e) => {
+      if (handleStart()) return;
+      if (e.code === "ArrowLeft" || e.code === "KeyA") doLeft();
+      if (e.code === "ArrowRight" || e.code === "KeyD") doRight();
+      if (e.code === "ArrowUp" || e.code === "KeyW" || e.code === "Space") doJump();
+      if (e.code === "ArrowDown" || e.code === "KeyS") doSlide();
     });
 
-    window.addEventListener("keydown", (e) => {
-      if (handleStartInput()) return;
-      if ((e.code === "ArrowLeft" || e.code === "KeyA") && player.targetLane > -1) player.targetLane--;
-      if ((e.code === "ArrowRight" || e.code === "KeyD") && player.targetLane < 1) player.targetLane++;
-      if ((e.code === "ArrowUp" || e.code === "KeyW" || e.code === "Space") && !player.isJumping) {
-        player.isJumping = true;
-        player.vy = 16;
-        Audio.jump();
-      }
-      if (e.code === "ArrowDown" || e.code === "KeyS") {
-        if (player.isJumping) player.vy = -18;
-        player.isSliding = true;
-        player.slideTimer = 34;
-        Audio.slide();
-      }
-    });
+    window.addEventListener("mousedown", () => handleStart());
 
     function resetGame() {
-      distance = 0;
+      score = 0;
+      coins = 0;
       currentSpeed = START_SPEED;
       player.lane = 0;
       player.targetLane = 0;
@@ -197,9 +252,10 @@
       player.runCycle = 0;
 
       obstacles = [];
-      shards = [];
+      coinPickups = [];
 
-      for (let z = 900; z < 3800; z += 420) {
+      // Generously spaced initial track (lots of reaction time)
+      for (let z = 1200; z < 4200; z += 550) {
         spawnFeature(z);
       }
     }
@@ -209,14 +265,20 @@
       const roll = Math.random();
 
       if (roll < 0.45) {
-        obstacles.push({ lane, z, type: "barrier", w: 75, h: 42, y: 0 });
-      } else if (roll < 0.78) {
-        obstacles.push({ lane, z, type: "gate", w: 75, h: 70, y: 35 });
+        // Ancient Broken Log / Tree (JUMP)
+        obstacles.push({ lane, z, type: "log", w: 70, h: 36, y: 0 });
+      } else if (roll < 0.75) {
+        // Fire Trap Archway (SLIDE)
+        obstacles.push({ lane, z, type: "fire", w: 70, h: 65, y: 32 });
       } else {
-        shards.push({ lane, z, collected: false });
+        // Trail of 3 gold coins
+        for (let k = 0; k < 3; k++) {
+          coinPickups.push({ lane, z: z + k * 80, collected: false });
+        }
       }
     }
 
+    // 3D Perspective Projection
     function project(x, y, z) {
       const horizonY = height * HORIZON_RATIO;
       const validZ = Math.max(z, 0.1);
@@ -228,19 +290,23 @@
       };
     }
 
+    // --- GAME ENGINE LOOP ---
     function update() {
       if (state !== "play") return;
 
-      currentSpeed = Math.min(MAX_SPEED, START_SPEED + (distance * 0.0018));
-      distance += currentSpeed;
-      player.runCycle += currentSpeed * 0.035;
+      // Gentle speed progression
+      currentSpeed = Math.min(MAX_SPEED, START_SPEED + (score * 0.0012));
+      score += currentSpeed;
+      player.runCycle += currentSpeed * 0.04;
 
+      // Smooth horizontal shift with subtle banking
       const targetX = player.targetLane * player.laneWidth;
-      player.laneX += (targetX - player.laneX) * 0.28;
+      player.laneX += (targetX - player.laneX) * 0.22;
 
+      // Jump arc
       if (player.isJumping) {
         player.y += player.vy;
-        player.vy -= 1.05;
+        player.vy -= 0.85; // Lower gravity = floatier, comfortable jumps
         if (player.y <= 0) {
           player.y = 0;
           player.vy = 0;
@@ -253,18 +319,19 @@
         if (player.slideTimer <= 0) player.isSliding = false;
       }
 
-      // Obstacle collision
+      // Check Obstacles
       for (let i = obstacles.length - 1; i >= 0; i--) {
         const obs = obstacles[i];
         obs.z -= currentSpeed;
 
-        if (obs.z < 165 && obs.z > 75) {
-          const inSameLane = Math.abs(player.laneX - obs.lane * player.laneWidth) < 40;
-          if (inSameLane) {
-            if (obs.type === "barrier" && player.y < obs.h - 5) {
+        // Lenient collision box
+        if (obs.z < 210 && obs.z > 110) {
+          const sameLane = Math.abs(player.laneX - obs.lane * player.laneWidth) < 36;
+          if (sameLane) {
+            if (obs.type === "log" && player.y < obs.h - 8) {
               die();
               return;
-            } else if (obs.type === "gate" && (!player.isSliding || player.y > 10)) {
+            } else if (obs.type === "fire" && (!player.isSliding || player.y > 8)) {
               die();
               return;
             }
@@ -273,274 +340,280 @@
         if (obs.z < 20) obstacles.splice(i, 1);
       }
 
-      // Energy pickups
-      for (let i = shards.length - 1; i >= 0; i--) {
-        const sh = shards[i];
-        sh.z -= currentSpeed;
+      // Check Coins
+      for (let i = coinPickups.length - 1; i >= 0; i--) {
+        const c = coinPickups[i];
+        c.z -= currentSpeed;
 
-        if (!sh.collected && sh.z < 165 && sh.z > 75) {
-          if (Math.abs(player.laneX - sh.lane * player.laneWidth) < 45) {
-            sh.collected = true;
-            distance += 350;
-            Audio.score();
+        if (!c.collected && c.z < 210 && c.z > 100) {
+          if (Math.abs(player.laneX - c.lane * player.laneWidth) < 42) {
+            c.collected = true;
+            coins += 1;
+            score += 60;
+            Audio.coin();
           }
         }
-        if (sh.z < 20) shards.splice(i, 1);
+        if (c.z < 20) coinPickups.splice(i, 1);
       }
 
-      // Spawning
+      // Spawning new features ahead with lots of breathing room
       let furthestZ = 0;
       for (let i = 0; i < obstacles.length; i++) {
         if (obstacles[i].z > furthestZ) furthestZ = obstacles[i].z;
       }
-      if (furthestZ < 3500) {
-        const spacing = Math.max(340, 480 - currentSpeed * 4);
-        spawnFeature(furthestZ + spacing + Math.random() * 80);
+      if (furthestZ < 3600) {
+        const spacing = Math.max(480, 650 - currentSpeed * 6);
+        spawnFeature(furthestZ + spacing + Math.random() * 100);
       }
     }
 
     function die() {
       Audio.crash();
       state = "dead";
-      const total = Math.floor(distance / 10);
-      if (total > highDistance) {
-        highDistance = total;
-        try { localStorage.setItem("sr_high_v3", highDistance); } catch (e) {}
+      const total = Math.floor(score / 10);
+      if (total > highScore) {
+        highScore = total;
+        try { localStorage.setItem("tr_high", highScore); } catch (e) {}
       }
     }
 
-    function drawRunner(x, y, scale) {
+    // --- DRAW TEMPLE RUN EXPLORER (High visibility & banking) ---
+    function drawExplorer(x, y, scale) {
       ctx.save();
       ctx.translate(x, y);
 
+      // Subtle dynamic body tilt when moving across lanes
+      const laneDelta = (player.targetLane * player.laneWidth - player.laneX);
+      const bankAngle = Math.max(-0.25, Math.min(0.25, laneDelta * 0.015));
+      ctx.rotate(bankAngle);
+
       const bob = (player.isJumping || player.isSliding) ? 0 : Math.sin(player.runCycle * 2) * 4 * scale;
-      const swing = Math.sin(player.runCycle);
+      const legSwing = Math.sin(player.runCycle);
+
+      // Drop shadow underneath player on the temple stones
+      ctx.fillStyle = "rgba(0, 0, 0, 0.4)";
+      ctx.beginPath();
+      ctx.ellipse(0, 2 * scale, 16 * scale, 7 * scale, 0, 0, Math.PI * 2);
+      ctx.fill();
 
       if (player.isSliding) {
-        ctx.fillStyle = "#00e5ff";
-        ctx.fillRect(-12 * scale, -16 * scale, 24 * scale, 12 * scale);
-        ctx.beginPath();
-        ctx.arc(-16 * scale, -18 * scale, 5 * scale, 0, Math.PI * 2);
-        ctx.fill();
+        // --- Low Dust Slide ---
+        ctx.fillStyle = "#8a572a"; // Leather jacket
+        ctx.fillRect(-12 * scale, -18 * scale, 24 * scale, 12 * scale);
 
-        ctx.strokeStyle = "#00e5ff";
-        ctx.lineWidth = 4 * scale;
+        // Fedora hat
+        ctx.fillStyle = "#4a2c11";
+        ctx.fillRect(-18 * scale, -24 * scale, 14 * scale, 6 * scale);
+
+        // Legs sliding forward
+        ctx.strokeStyle = "#d4b27b"; // Khaki pants
+        ctx.lineWidth = 5 * scale;
         ctx.beginPath();
         ctx.moveTo(-6 * scale, -8 * scale);
-        ctx.lineTo(18 * scale, 0);
+        ctx.lineTo(20 * scale, 0);
         ctx.stroke();
+
+        // Temple dust puff
+        ctx.fillStyle = "rgba(180, 140, 90, 0.5)";
+        ctx.beginPath();
+        ctx.arc(22 * scale, 0, 6 * scale, 0, Math.PI * 2);
+        ctx.fill();
       } else if (player.isJumping) {
-        ctx.fillStyle = "#00e5ff";
+        // --- Elevated Leap ---
+        // Torso
+        ctx.fillStyle = "#8a572a";
         ctx.beginPath();
-        ctx.arc(0, -26 * scale, 12 * scale, 0, Math.PI * 2);
+        ctx.arc(0, -28 * scale, 13 * scale, 0, Math.PI * 2);
         ctx.fill();
 
-        ctx.fillStyle = "#ffffff";
+        // Fedora
+        ctx.fillStyle = "#4a2c11";
+        ctx.fillRect(-14 * scale, -44 * scale, 28 * scale, 5 * scale);
+        ctx.fillRect(-9 * scale, -52 * scale, 18 * scale, 8 * scale);
+
+        // Tucked legs
+        ctx.strokeStyle = "#d4b27b";
+        ctx.lineWidth = 5 * scale;
         ctx.beginPath();
-        ctx.arc(0, -29 * scale, 5 * scale, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.arc(0, -18 * scale, 9 * scale, 0, Math.PI);
+        ctx.stroke();
       } else {
-        const hipY = (-22 + bob) * scale;
-        const shoulderY = (-42 + bob) * scale;
-        const headY = (-54 + bob) * scale;
+        // --- Running Explorer (Clear silhouette with Fedora & Backpack) ---
+        const hipY = (-24 + bob) * scale;
+        const shoulderY = (-46 + bob) * scale;
+        const headY = (-58 + bob) * scale;
 
-        ctx.strokeStyle = "#00e5ff";
-        ctx.fillStyle = "#00e5ff";
-        ctx.lineWidth = 4 * scale;
+        // Khaki Legs
+        ctx.strokeStyle = "#d4b27b";
+        ctx.lineWidth = 5 * scale;
         ctx.lineCap = "round";
 
         // Left Leg
         ctx.beginPath();
         ctx.moveTo(-6 * scale, hipY);
-        ctx.lineTo(-8 * scale, hipY + 11 * scale + swing * 4 * scale);
-        ctx.lineTo(-6 * scale + swing * 6 * scale, Math.min(0, hipY + 22 * scale + swing * 7 * scale));
+        ctx.lineTo(-8 * scale, hipY + 12 * scale + legSwing * 5 * scale);
+        ctx.lineTo(-6 * scale + legSwing * 7 * scale, Math.min(0, hipY + 24 * scale + legSwing * 8 * scale));
         ctx.stroke();
 
         // Right Leg
         ctx.beginPath();
         ctx.moveTo(6 * scale, hipY);
-        ctx.lineTo(8 * scale, hipY + 11 * scale - swing * 4 * scale);
-        ctx.lineTo(6 * scale - swing * 6 * scale, Math.min(0, hipY + 22 * scale - swing * 7 * scale));
+        ctx.lineTo(8 * scale, hipY + 12 * scale - legSwing * 5 * scale);
+        ctx.lineTo(6 * scale - legSwing * 7 * scale, Math.min(0, hipY + 24 * scale - legSwing * 8 * scale));
         ctx.stroke();
 
-        // Body
+        // Leather Torso
+        ctx.fillStyle = "#8a572a";
         ctx.beginPath();
-        ctx.moveTo(-10 * scale, shoulderY);
-        ctx.lineTo(10 * scale, shoulderY);
-        ctx.lineTo(6 * scale, hipY);
-        ctx.lineTo(-6 * scale, hipY);
+        ctx.moveTo(-11 * scale, shoulderY);
+        ctx.lineTo(11 * scale, shoulderY);
+        ctx.lineTo(7 * scale, hipY);
+        ctx.lineTo(-7 * scale, hipY);
         ctx.closePath();
         ctx.fill();
 
-        // Arms
+        // Adventurer Backpack
+        ctx.fillStyle = "#5c3818";
+        ctx.fillRect(-7 * scale, shoulderY + 4 * scale, 14 * scale, 12 * scale);
+
+        // Arms swinging
+        ctx.strokeStyle = "#8a572a";
         ctx.beginPath();
-        ctx.moveTo(-10 * scale, shoulderY);
-        ctx.lineTo(-14 * scale, shoulderY + 16 * scale - swing * 7 * scale);
+        ctx.moveTo(-11 * scale, shoulderY);
+        ctx.lineTo(-15 * scale, shoulderY + 15 * scale - legSwing * 7 * scale);
         ctx.stroke();
 
         ctx.beginPath();
-        ctx.moveTo(10 * scale, shoulderY);
-        ctx.lineTo(14 * scale, shoulderY + 16 * scale + swing * 7 * scale);
+        ctx.moveTo(11 * scale, shoulderY);
+        ctx.lineTo(15 * scale, shoulderY + 15 * scale + legSwing * 7 * scale);
         ctx.stroke();
 
         // Head
+        ctx.fillStyle = "#e6b98d";
         ctx.beginPath();
-        ctx.arc(0, headY, 6 * scale, 0, Math.PI * 2);
+        ctx.arc(0, headY, 6.5 * scale, 0, Math.PI * 2);
         ctx.fill();
 
-        // Core light
-        ctx.fillStyle = "#ffffff";
-        ctx.fillRect(-1.5 * scale, shoulderY + 3 * scale, 3 * scale, 10 * scale);
+        // Fedora (Brown Adventurer Hat)
+        ctx.fillStyle = "#4a2c11";
+        ctx.fillRect(-15 * scale, headY - 3 * scale, 30 * scale, 4 * scale); // Brim
+        ctx.fillRect(-9 * scale, headY - 11 * scale, 18 * scale, 8 * scale);  // Crown
       }
 
       ctx.restore();
     }
 
+    // --- RENDER PIPELINE ---
     function render() {
-      // Re-check valid bounds
       if (width <= 0 || height <= 0) resize();
 
       ctx.clearRect(0, 0, width, height);
 
       const horizonY = height * HORIZON_RATIO;
 
-      // Sky
-      ctx.fillStyle = "#10091d";
+      // Temple Jungle Canopy & Sunset
+      const bgGrad = ctx.createLinearGradient(0, 0, 0, horizonY);
+      bgGrad.addColorStop(0, "#0e180e");
+      bgGrad.addColorStop(0.7, "#28170c");
+      bgGrad.addColorStop(1, "#522b10");
+      ctx.fillStyle = bgGrad;
       ctx.fillRect(0, 0, width, horizonY);
 
-      // Sun
-      ctx.fillStyle = "#ff0077";
+      // Distant Temple Silhouette Sun
+      ctx.fillStyle = "#ff8c1a";
       ctx.beginPath();
-      ctx.arc(width / 2, horizonY, Math.min(65, width * 0.18), Math.PI, 0);
+      ctx.arc(width / 2, horizonY, 55, Math.PI, 0);
       ctx.fill();
 
-      // Ground
-      ctx.fillStyle = "#07080d";
+      // Deep Ruin Abyss (Ground sides)
+      ctx.fillStyle = "#120804";
       ctx.fillRect(0, horizonY, width, height - horizonY);
 
-      // Rails
-      ctx.lineWidth = 2;
-      const rails = [-1.5, -0.5, 0.5, 1.5];
-      for (let i = 0; i < rails.length; i++) {
-        const r = rails[i];
-        const pFar = project(r * player.laneWidth, 0, 3400);
-        const pNear = project(r * player.laneWidth, 0, 70);
-        ctx.strokeStyle = "rgba(0, 229, 255, 0.35)";
-        ctx.beginPath();
-        ctx.moveTo(pFar.x, pFar.y);
-        ctx.lineTo(pNear.x, pNear.y);
-        ctx.stroke();
-      }
+      // Stone Bridge Pathway (Temple Floor)
+      const pTrackFarL = project(-1.6 * player.laneWidth, 0, 3600);
+      const pTrackFarR = project(1.6 * player.laneWidth, 0, 3600);
+      const pTrackNearL = project(-1.6 * player.laneWidth, 0, 80);
+      const pTrackNearR = project(1.6 * player.laneWidth, 0, 80);
 
-      // Horizontal crosslines
-      const gridSpacing = 160;
-      const offset = distance % gridSpacing;
-      for (let z = 3400; z > 70; z -= gridSpacing) {
+      // Ancient Stone Floor Fill
+      ctx.fillStyle = "#2d231b";
+      ctx.beginPath();
+      ctx.moveTo(pTrackFarL.x, pTrackFarL.y);
+      ctx.lineTo(pTrackFarR.x, pTrackFarR.y);
+      ctx.lineTo(pTrackNearR.x, pTrackNearR.y);
+      ctx.lineTo(pTrackNearL.x, pTrackNearL.y);
+      ctx.closePath();
+      ctx.fill();
+
+      // Stone Carved Edge Borders (Left & Right parapets)
+      ctx.strokeStyle = "#825d3b";
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(pTrackFarL.x, pTrackFarL.y);
+      ctx.lineTo(pTrackNearL.x, pTrackNearL.y);
+      ctx.moveTo(pTrackFarR.x, pTrackFarR.y);
+      ctx.lineTo(pTrackNearR.x, pTrackNearR.y);
+      ctx.stroke();
+
+      // Stone Tile Seams
+      const tileSpacing = 140;
+      const offset = score % tileSpacing;
+      for (let z = 3600; z > 80; z -= tileSpacing) {
         const actualZ = z - offset;
-        if (actualZ <= 70) continue;
-        const pLeft = project(-1.5 * player.laneWidth, 0, actualZ);
-        const pRight = project(1.5 * player.laneWidth, 0, actualZ);
-        const alpha = Math.max(0.05, 1 - actualZ / 3000);
-        ctx.strokeStyle = `rgba(138, 43, 226, ${alpha})`;
+        if (actualZ <= 80) continue;
+        const pLeft = project(-1.6 * player.laneWidth, 0, actualZ);
+        const pRight = project(1.6 * player.laneWidth, 0, actualZ);
+        const alpha = Math.max(0.1, 1 - actualZ / 3000);
+        ctx.strokeStyle = `rgba(18, 12, 8, ${alpha})`;
+        ctx.lineWidth = 2;
         ctx.beginPath();
         ctx.moveTo(pLeft.x, pLeft.y);
         ctx.lineTo(pRight.x, pRight.y);
         ctx.stroke();
       }
 
-      // Sort Obstacles & Pickups
-      const renderables = [];
-      for (let i = 0; i < obstacles.length; i++) {
-        renderables.push({ ...obstacles[i], rType: "obs" });
-      }
-      for (let i = 0; i < shards.length; i++) {
-        if (!shards[i].collected) renderables.push({ ...shards[i], rType: "shard" });
-      }
-      renderables.sort((a, b) => b.z - a.z);
+      // Sort Obstacles & Coins back to front
+      const items = [
+        ...obstacles.map(o => ({ ...o, rType: "obs" })),
+        ...coinPickups.filter(c => !c.collected).map(c => ({ ...c, rType: "coin" }))
+      ].sort((a, b) => b.z - a.z);
 
-      for (let i = 0; i < renderables.length; i++) {
-        const item = renderables[i];
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
         const xPos = item.lane * player.laneWidth;
 
-        if (item.rType === "shard") {
-          const p = project(xPos, 30 + Math.sin(distance * 0.05 + item.z) * 6, item.z);
-          ctx.fillStyle = "#00ff99";
+        if (item.rType === "coin") {
+          const p = project(xPos, 28 + Math.sin(score * 0.05 + item.z) * 6, item.z);
+          // Spinning gold coin
+          const spinScale = Math.abs(Math.cos(score * 0.05 + item.z * 0.02));
+          ctx.fillStyle = "#ffcc00";
           ctx.beginPath();
-          ctx.arc(p.x, p.y, Math.max(2, 14 * p.scale), 0, Math.PI * 2);
+          ctx.ellipse(p.x, p.y, Math.max(2, 13 * p.scale * spinScale), Math.max(2, 13 * p.scale), 0, 0, Math.PI * 2);
           ctx.fill();
+          ctx.strokeStyle = "#ffe680";
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
         } else if (item.rType === "obs") {
           const p = project(xPos, item.y, item.z);
           const w = item.w * p.scale;
           const h = item.h * p.scale;
 
-          if (item.type === "barrier") {
-            ctx.fillStyle = "#ff1744";
+          if (item.type === "log") {
+            // Broken Tree Trunk Barrier (JUMP OVER)
+            ctx.fillStyle = "#4a2e18";
             ctx.fillRect(p.x - w / 2, p.y - h, w, h);
-            ctx.strokeStyle = "#ffffff";
-            ctx.strokeRect(p.x - w / 2, p.y - h, w, h);
+            ctx.fillStyle = "#331e0f";
+            ctx.fillRect(p.x - w / 2 + 4, p.y - h + 4, w - 8, h - 8);
+            // Red warning band
+            ctx.fillStyle = "#cc3300";
+            ctx.fillRect(p.x - w / 2, p.y - h - 3, w, 4);
           } else {
-            ctx.fillStyle = "rgba(255, 214, 0, 0.4)";
-            ctx.fillRect(p.x - w / 2, p.y - h, w, h);
-            ctx.strokeStyle = "#ffd600";
-            ctx.lineWidth = Math.max(1, 2 * p.scale);
-            ctx.strokeRect(p.x - w / 2, p.y - h, w, h);
-          }
-        }
-      }
-
-      // Draw Runner at Z=120
-      const pRunner = project(player.laneX, player.y, 120);
-      drawRunner(pRunner.x, pRunner.y, pRunner.scale);
-
-      // UI
-      if (state === "play") {
-        ctx.fillStyle = "#ffffff";
-        ctx.font = "bold 20px monospace";
-        ctx.textAlign = "left";
-        ctx.fillText(`${Math.floor(distance / 10)} M`, 20, 40);
-
-        const kmh = Math.floor(currentSpeed * 8.5);
-        ctx.font = "bold 12px monospace";
-        ctx.fillStyle = currentSpeed < 12 ? "#00ff99" : currentSpeed < 18 ? "#ffd600" : "#ff1744";
-        ctx.fillText(`${kmh} KM/H`, 20, 62);
-      } else if (state === "menu") {
-        ctx.fillStyle = "#ffffff";
-        ctx.textAlign = "center";
-        ctx.font = "bold 28px sans-serif";
-        ctx.fillText("SHADOW RUNNER", width / 2, height / 2 - 70);
-
-        ctx.font = "14px monospace";
-        ctx.fillStyle = "#00e5ff";
-        ctx.fillText("SWIPE LEFT / RIGHT", width / 2, height / 2 - 20);
-        ctx.fillText("SWIPE UP TO JUMP", width / 2, height / 2 + 10);
-        ctx.fillText("SWIPE DOWN TO SLIDE", width / 2, height / 2 + 40);
-
-        ctx.fillStyle = "#ff0077";
-        ctx.font = "bold 16px sans-serif";
-        ctx.fillText("TAP SCREEN TO PLAY", width / 2, height / 2 + 95);
-      } else if (state === "dead") {
-        ctx.fillStyle = "#ff1744";
-        ctx.textAlign = "center";
-        ctx.font = "bold 32px sans-serif";
-        ctx.fillText("CRASHED", width / 2, height / 2 - 55);
-
-        ctx.fillStyle = "#ffffff";
-        ctx.font = "bold 18px monospace";
-        ctx.fillText(`DISTANCE: ${Math.floor(distance / 10)} M`, width / 2, height / 2 - 10);
-        ctx.fillText(`BEST: ${highDistance} M`, width / 2, height / 2 + 20);
-
-        ctx.fillStyle = "#00e5ff";
-        ctx.font = "bold 15px sans-serif";
-        ctx.fillText("TAP TO RETRY", width / 2, height / 2 + 75);
-      }
-
-      update();
-      requestAnimationFrame(render);
-    }
-
-    // Start immediately
-    resetGame();
-    requestAnimationFrame(render);
-  </script>
-</body>
-</html>
+            // Temple Stone Arch with Flaming Fire (SLIDE UNDER)
+            ctx.fillStyle = "#3d2b1f";
+            ctx.fillRect(p.x - w / 2, p.y - h, w, h * 0.35); // top lintel
+            // Pillars
+            ctx.fillRect(p.x - w / 2, p.y - h, 8 * p.scale, h);
+            ctx.fillRect(p.x + w / 2 - 8 * p.scale, p.y - h, 8 * p.scale, h);
+            // Fire flames under arch
+            ctx.fillStyle = "#ff6600";
+            ctx.fillRect(p.x - w / 2 + 6, p.y - h + h * 0.3, w - 12, 8
