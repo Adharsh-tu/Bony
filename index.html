@@ -17,18 +17,21 @@
       width: 100%;
       height: 100%;
       overflow: hidden;
-      background: #120904;
+      background: #180d05;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     }
     #canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
       display: block;
-      width: 100vw;
-      height: 100vh;
+      z-index: 1;
     }
-    /* Optional On-Screen Mobile Button Bar */
     .controls-overlay {
       position: absolute;
-      bottom: 12px;
+      bottom: 20px;
       left: 0;
       width: 100%;
       display: flex;
@@ -46,18 +49,18 @@
       width: 58px;
       height: 58px;
       border-radius: 50%;
-      background: rgba(30, 20, 15, 0.65);
-      border: 2px solid rgba(255, 180, 50, 0.6);
-      color: #ffc44d;
+      background: rgba(35, 20, 10, 0.75);
+      border: 2px solid #ffb03b;
+      color: #ffb03b;
       font-weight: 900;
       font-size: 20px;
       display: flex;
       align-items: center;
       justify-content: center;
-      backdrop-filter: blur(4px);
+      box-shadow: 0 4px 8px rgba(0,0,0,0.5);
     }
     .btn:active {
-      background: rgba(255, 180, 50, 0.4);
+      background: rgba(255, 176, 59, 0.4);
       transform: scale(0.92);
     }
   </style>
@@ -80,18 +83,21 @@
     const canvas = document.getElementById("canvas");
     const ctx = canvas.getContext("2d");
 
-    let width = window.innerWidth || 360;
-    let height = window.innerHeight || 640;
+    let width = 360;
+    let height = 640;
 
     function resize() {
-      width = canvas.width = window.innerWidth || 360;
-      height = canvas.height = window.innerHeight || 640;
+      width = window.innerWidth || document.documentElement.clientWidth || 360;
+      height = window.innerHeight || document.documentElement.clientHeight || 640;
+      canvas.width = width;
+      canvas.height = height;
     }
     window.addEventListener("resize", resize);
+    window.addEventListener("orientationchange", () => setTimeout(resize, 100));
     resize();
 
-    // --- Lightweight Procedural Audio ---
-    const Audio = {
+    // Audio Engine (Passive/Non-blocking)
+    const AudioEngine = {
       ctx: null,
       init() {
         try {
@@ -102,87 +108,73 @@
           if (this.ctx && this.ctx.state === "suspended") this.ctx.resume();
         } catch (e) {}
       },
-      beep(fStart, fEnd, dur, type = "sine", vol = 0.12) {
+      play(freq, dur) {
         try {
           if (!this.ctx) return;
           const osc = this.ctx.createOscillator();
           const gain = this.ctx.createGain();
-          osc.type = type;
-          osc.frequency.setValueAtTime(fStart, this.ctx.currentTime);
-          osc.frequency.exponentialRampToValueAtTime(Math.max(20, fEnd), this.ctx.currentTime + dur);
-          gain.gain.setValueAtTime(vol, this.ctx.currentTime);
+          osc.frequency.setValueAtTime(freq, this.ctx.currentTime);
+          gain.gain.setValueAtTime(0.1, this.ctx.currentTime);
           gain.gain.linearRampToValueAtTime(0.01, this.ctx.currentTime + dur);
           osc.connect(gain);
           gain.connect(this.ctx.destination);
           osc.start();
           osc.stop(this.ctx.currentTime + dur);
         } catch (e) {}
-      },
-      jump() { this.beep(240, 550, 0.18, "sine", 0.15); },
-      slide() { this.beep(300, 120, 0.15, "triangle", 0.12); },
-      coin() { this.beep(650, 1100, 0.1, "sine", 0.15); },
-      crash() { this.beep(160, 40, 0.4, "sawtooth", 0.25); }
+      }
     };
 
-    // --- Elevated Temple Run Perspective Constants ---
-    const FOV = 320;
-    const CAMERA_HEIGHT = 280; // High angle looking down
-    const HORIZON_RATIO = 0.32; // Low horizon gives long forward visibility
-
-    // --- Game Variables (Simplified & Forgiving) ---
+    // Game State
     let state = "menu"; // 'menu', 'play', 'dead'
     let score = 0;
     let coins = 0;
     let highScore = 0;
-    try { highScore = parseInt(localStorage.getItem("tr_high")) || 0; } catch (e) {}
+    try { highScore = parseInt(localStorage.getItem("te_high")) || 0; } catch (e) {}
 
-    // Gentle progressive speed
-    const START_SPEED = 5.2; // Slow relaxed jog
-    const MAX_SPEED = 14.5;  // Easy-to-react top speed
-    let currentSpeed = START_SPEED;
+    const START_SPEED = 5;
+    const MAX_SPEED = 14;
+    let speed = START_SPEED;
 
-    // Player (Temple Explorer)
+    // Player Explorer
     const player = {
-      lane: 0,        // -1: Left, 0: Mid, 1: Right
+      lane: 0, // -1: Left, 0: Mid, 1: Right
       targetLane: 0,
-      laneX: 0,
-      laneWidth: 95,
+      x: 0,
       y: 0,
       vy: 0,
       isJumping: false,
       isSliding: false,
       slideTimer: 0,
-      runCycle: 0
+      step: 0
     };
 
     let obstacles = [];
-    let coinPickups = [];
+    let coinList = [];
 
-    // --- Input Actions ---
-    function doLeft() {
+    function moveLeft() {
       if (player.targetLane > -1) player.targetLane--;
     }
-    function doRight() {
+    function moveRight() {
       if (player.targetLane < 1) player.targetLane++;
     }
-    function doJump() {
+    function jump() {
       if (!player.isJumping && !player.isSliding) {
         player.isJumping = true;
-        player.vy = 15; // floaty, forgiving jump
-        Audio.jump();
+        player.vy = 14;
+        AudioEngine.play(400, 0.15);
       }
     }
-    function doSlide() {
+    function slide() {
       if (!player.isSliding) {
         if (player.isJumping) player.vy = -16;
         player.isSliding = true;
-        player.slideTimer = 38;
-        Audio.slide();
+        player.slideTimer = 36;
+        AudioEngine.play(250, 0.15);
       }
     }
 
-    function handleStart() {
-      Audio.init();
+    function triggerStart() {
+      AudioEngine.init();
       if (state !== "play") {
         resetGame();
         state = "play";
@@ -191,122 +183,124 @@
       return false;
     }
 
-    // Button controls
-    document.getElementById("btnLeft").addEventListener("pointerdown", (e) => { e.stopPropagation(); handleStart() || doLeft(); });
-    document.getElementById("btnRight").addEventListener("pointerdown", (e) => { e.stopPropagation(); handleStart() || doRight(); });
-    document.getElementById("btnJump").addEventListener("pointerdown", (e) => { e.stopPropagation(); handleStart() || doJump(); });
-    document.getElementById("btnSlide").addEventListener("pointerdown", (e) => { e.stopPropagation(); handleStart() || doSlide(); });
+    // Button event wiring
+    const btnL = document.getElementById("btnLeft");
+    const btnR = document.getElementById("btnRight");
+    const btnJ = document.getElementById("btnJump");
+    const btnS = document.getElementById("btnSlide");
 
-    // Swipe controls
-    let touchStartX = 0;
-    let touchStartY = 0;
+    btnL.addEventListener("touchstart", (e) => { e.preventDefault(); triggerStart() || moveLeft(); });
+    btnR.addEventListener("touchstart", (e) => { e.preventDefault(); triggerStart() || moveRight(); });
+    btnJ.addEventListener("touchstart", (e) => { e.preventDefault(); triggerStart() || jump(); });
+    btnS.addEventListener("touchstart", (e) => { e.preventDefault(); triggerStart() || slide(); });
+
+    btnL.addEventListener("mousedown", (e) => { e.preventDefault(); triggerStart() || moveLeft(); });
+    btnR.addEventListener("mousedown", (e) => { e.preventDefault(); triggerStart() || moveRight(); });
+    btnJ.addEventListener("mousedown", (e) => { e.preventDefault(); triggerStart() || jump(); });
+    btnS.addEventListener("mousedown", (e) => { e.preventDefault(); triggerStart() || slide(); });
+
+    // Swipes
+    let tX = 0, tY = 0;
     window.addEventListener("touchstart", (e) => {
       const t = e.touches[0];
-      touchStartX = t.clientX;
-      touchStartY = t.clientY;
-      handleStart();
+      tX = t.clientX;
+      tY = t.clientY;
+      triggerStart();
     }, { passive: true });
 
     window.addEventListener("touchend", (e) => {
       if (state !== "play" || !e.changedTouches.length) return;
       const t = e.changedTouches[0];
-      const dx = t.clientX - touchStartX;
-      const dy = t.clientY - touchStartY;
-
+      const dx = t.clientX - tX;
+      const dy = t.clientY - tY;
       if (Math.abs(dx) > Math.abs(dy)) {
-        if (Math.abs(dx) > 25) {
-          if (dx > 0) doRight();
-          else doLeft();
+        if (Math.abs(dx) > 30) {
+          if (dx > 0) moveRight();
+          else moveLeft();
         }
       } else {
-        if (Math.abs(dy) > 25) {
-          if (dy < 0) doJump();
-          else doSlide();
+        if (Math.abs(dy) > 30) {
+          if (dy < 0) jump();
+          else slide();
         }
       }
     }, { passive: true });
 
-    // Keyboard support
     window.addEventListener("keydown", (e) => {
-      if (handleStart()) return;
-      if (e.code === "ArrowLeft" || e.code === "KeyA") doLeft();
-      if (e.code === "ArrowRight" || e.code === "KeyD") doRight();
-      if (e.code === "ArrowUp" || e.code === "KeyW" || e.code === "Space") doJump();
-      if (e.code === "ArrowDown" || e.code === "KeyS") doSlide();
+      if (triggerStart()) return;
+      if (e.code === "ArrowLeft" || e.code === "KeyA") moveLeft();
+      if (e.code === "ArrowRight" || e.code === "KeyD") moveRight();
+      if (e.code === "ArrowUp" || e.code === "KeyW" || e.code === "Space") jump();
+      if (e.code === "ArrowDown" || e.code === "KeyS") slide();
     });
 
-    window.addEventListener("mousedown", () => handleStart());
+    window.addEventListener("mousedown", () => triggerStart());
 
     function resetGame() {
       score = 0;
       coins = 0;
-      currentSpeed = START_SPEED;
+      speed = START_SPEED;
       player.lane = 0;
       player.targetLane = 0;
-      player.laneX = 0;
+      player.x = 0;
       player.y = 0;
       player.vy = 0;
       player.isJumping = false;
       player.isSliding = false;
       player.slideTimer = 0;
-      player.runCycle = 0;
+      player.step = 0;
 
       obstacles = [];
-      coinPickups = [];
+      coinList = [];
 
-      // Generously spaced initial track (lots of reaction time)
-      for (let z = 1200; z < 4200; z += 550) {
-        spawnFeature(z);
+      for (let z = 1000; z < 3600; z += 500) {
+        spawnItem(z);
       }
     }
 
-    function spawnFeature(z) {
+    function spawnItem(z) {
       const lane = Math.floor(Math.random() * 3) - 1;
-      const roll = Math.random();
-
-      if (roll < 0.45) {
-        // Ancient Broken Log / Tree (JUMP)
-        obstacles.push({ lane, z, type: "log", w: 70, h: 36, y: 0 });
-      } else if (roll < 0.75) {
-        // Fire Trap Archway (SLIDE)
-        obstacles.push({ lane, z, type: "fire", w: 70, h: 65, y: 32 });
+      const r = Math.random();
+      if (r < 0.45) {
+        // Log hurdle (Jump)
+        obstacles.push({ lane, z, type: "log" });
+      } else if (r < 0.75) {
+        // Flaming arch (Slide)
+        obstacles.push({ lane, z, type: "fire" });
       } else {
-        // Trail of 3 gold coins
-        for (let k = 0; k < 3; k++) {
-          coinPickups.push({ lane, z: z + k * 80, collected: false });
+        // Gold coins
+        for (let i = 0; i < 3; i++) {
+          coinList.push({ lane, z: z + i * 80, taken: false });
         }
       }
     }
 
-    // 3D Perspective Projection
+    // Perspective Projection Function
     function project(x, y, z) {
-      const horizonY = height * HORIZON_RATIO;
-      const validZ = Math.max(z, 0.1);
-      const scale = FOV / validZ;
+      const horizonY = height * 0.35;
+      const scale = 280 / Math.max(z, 1);
       return {
         x: width / 2 + x * scale,
-        y: horizonY + (CAMERA_HEIGHT - y) * scale,
+        y: horizonY + (220 - y) * scale,
         scale: scale
       };
     }
 
-    // --- GAME ENGINE LOOP ---
     function update() {
       if (state !== "play") return;
 
-      // Gentle speed progression
-      currentSpeed = Math.min(MAX_SPEED, START_SPEED + (score * 0.0012));
-      score += currentSpeed;
-      player.runCycle += currentSpeed * 0.04;
+      speed = Math.min(MAX_SPEED, START_SPEED + score * 0.001);
+      score += speed;
+      player.step += speed * 0.05;
 
-      // Smooth horizontal shift with subtle banking
-      const targetX = player.targetLane * player.laneWidth;
-      player.laneX += (targetX - player.laneX) * 0.22;
+      // Lane shift
+      const targetX = player.targetLane * 90;
+      player.x += (targetX - player.x) * 0.25;
 
-      // Jump arc
+      // Jump
       if (player.isJumping) {
         player.y += player.vy;
-        player.vy -= 0.85; // Lower gravity = floatier, comfortable jumps
+        player.vy -= 0.85;
         if (player.y <= 0) {
           player.y = 0;
           player.vy = 0;
@@ -314,6 +308,7 @@
         }
       }
 
+      // Slide
       if (player.isSliding) {
         player.slideTimer--;
         if (player.slideTimer <= 0) player.isSliding = false;
@@ -321,299 +316,294 @@
 
       // Check Obstacles
       for (let i = obstacles.length - 1; i >= 0; i--) {
-        const obs = obstacles[i];
-        obs.z -= currentSpeed;
+        const o = obstacles[i];
+        o.z -= speed;
 
-        // Lenient collision box
-        if (obs.z < 210 && obs.z > 110) {
-          const sameLane = Math.abs(player.laneX - obs.lane * player.laneWidth) < 36;
+        if (o.z < 210 && o.z > 110) {
+          const sameLane = Math.abs(player.x - o.lane * 90) < 38;
           if (sameLane) {
-            if (obs.type === "log" && player.y < obs.h - 8) {
-              die();
+            if (o.type === "log" && player.y < 28) {
+              endGame();
               return;
-            } else if (obs.type === "fire" && (!player.isSliding || player.y > 8)) {
-              die();
+            } else if (o.type === "fire" && (!player.isSliding || player.y > 8)) {
+              endGame();
               return;
             }
           }
         }
-        if (obs.z < 20) obstacles.splice(i, 1);
+        if (o.z < 20) obstacles.splice(i, 1);
       }
 
       // Check Coins
-      for (let i = coinPickups.length - 1; i >= 0; i--) {
-        const c = coinPickups[i];
-        c.z -= currentSpeed;
+      for (let i = coinList.length - 1; i >= 0; i--) {
+        const c = coinList[i];
+        c.z -= speed;
 
-        if (!c.collected && c.z < 210 && c.z > 100) {
-          if (Math.abs(player.laneX - c.lane * player.laneWidth) < 42) {
-            c.collected = true;
-            coins += 1;
-            score += 60;
-            Audio.coin();
+        if (!c.taken && c.z < 210 && c.z > 110) {
+          if (Math.abs(player.x - c.lane * 90) < 42) {
+            c.taken = true;
+            coins++;
+            score += 50;
+            AudioEngine.play(700, 0.08);
           }
         }
-        if (c.z < 20) coinPickups.splice(i, 1);
+        if (c.z < 20) coinList.splice(i, 1);
       }
 
-      // Spawning new features ahead with lots of breathing room
-      let furthestZ = 0;
+      // Spawn ahead
+      let maxZ = 0;
       for (let i = 0; i < obstacles.length; i++) {
-        if (obstacles[i].z > furthestZ) furthestZ = obstacles[i].z;
+        if (obstacles[i].z > maxZ) maxZ = obstacles[i].z;
       }
-      if (furthestZ < 3600) {
-        const spacing = Math.max(480, 650 - currentSpeed * 6);
-        spawnFeature(furthestZ + spacing + Math.random() * 100);
+      if (maxZ < 3200) {
+        spawnItem(maxZ + 500 + Math.random() * 80);
       }
     }
 
-    function die() {
-      Audio.crash();
+    function endGame() {
+      AudioEngine.play(120, 0.35);
       state = "dead";
-      const total = Math.floor(score / 10);
-      if (total > highScore) {
-        highScore = total;
-        try { localStorage.setItem("tr_high", highScore); } catch (e) {}
+      const finalScore = Math.floor(score / 10);
+      if (finalScore > highScore) {
+        highScore = finalScore;
+        try { localStorage.setItem("te_high", highScore); } catch (e) {}
       }
     }
 
-    // --- DRAW TEMPLE RUN EXPLORER (High visibility & banking) ---
-    function drawExplorer(x, y, scale) {
+    // Draw Character Explorer
+    function drawExplorer(x, y, s) {
       ctx.save();
       ctx.translate(x, y);
 
-      // Subtle dynamic body tilt when moving across lanes
-      const laneDelta = (player.targetLane * player.laneWidth - player.laneX);
-      const bankAngle = Math.max(-0.25, Math.min(0.25, laneDelta * 0.015));
-      ctx.rotate(bankAngle);
-
-      const bob = (player.isJumping || player.isSliding) ? 0 : Math.sin(player.runCycle * 2) * 4 * scale;
-      const legSwing = Math.sin(player.runCycle);
-
-      // Drop shadow underneath player on the temple stones
-      ctx.fillStyle = "rgba(0, 0, 0, 0.4)";
+      // Shadow
+      ctx.fillStyle = "rgba(0,0,0,0.45)";
       ctx.beginPath();
-      ctx.ellipse(0, 2 * scale, 16 * scale, 7 * scale, 0, 0, Math.PI * 2);
+      ctx.ellipse(0, 0, 16 * s, 6 * s, 0, 0, Math.PI * 2);
       ctx.fill();
 
+      const swing = Math.sin(player.step);
+
       if (player.isSliding) {
-        // --- Low Dust Slide ---
-        ctx.fillStyle = "#8a572a"; // Leather jacket
-        ctx.fillRect(-12 * scale, -18 * scale, 24 * scale, 12 * scale);
-
-        // Fedora hat
-        ctx.fillStyle = "#4a2c11";
-        ctx.fillRect(-18 * scale, -24 * scale, 14 * scale, 6 * scale);
-
-        // Legs sliding forward
-        ctx.strokeStyle = "#d4b27b"; // Khaki pants
-        ctx.lineWidth = 5 * scale;
-        ctx.beginPath();
-        ctx.moveTo(-6 * scale, -8 * scale);
-        ctx.lineTo(20 * scale, 0);
-        ctx.stroke();
-
-        // Temple dust puff
-        ctx.fillStyle = "rgba(180, 140, 90, 0.5)";
-        ctx.beginPath();
-        ctx.arc(22 * scale, 0, 6 * scale, 0, Math.PI * 2);
-        ctx.fill();
-      } else if (player.isJumping) {
-        // --- Elevated Leap ---
-        // Torso
-        ctx.fillStyle = "#8a572a";
-        ctx.beginPath();
-        ctx.arc(0, -28 * scale, 13 * scale, 0, Math.PI * 2);
-        ctx.fill();
-
+        // Slide pose
+        ctx.fillStyle = "#8d5b2d";
+        ctx.fillRect(-10 * s, -14 * s, 22 * s, 10 * s);
         // Fedora
-        ctx.fillStyle = "#4a2c11";
-        ctx.fillRect(-14 * scale, -44 * scale, 28 * scale, 5 * scale);
-        ctx.fillRect(-9 * scale, -52 * scale, 18 * scale, 8 * scale);
-
-        // Tucked legs
-        ctx.strokeStyle = "#d4b27b";
-        ctx.lineWidth = 5 * scale;
+        ctx.fillStyle = "#472c14";
+        ctx.fillRect(-16 * s, -18 * s, 16 * s, 6 * s);
+        // Extended leg
+        ctx.strokeStyle = "#d1b48c";
+        ctx.lineWidth = 4 * s;
         ctx.beginPath();
-        ctx.arc(0, -18 * scale, 9 * scale, 0, Math.PI);
+        ctx.moveTo(-4 * s, -6 * s);
+        ctx.lineTo(16 * s, 0);
         ctx.stroke();
+      } else if (player.isJumping) {
+        // Jump pose
+        ctx.fillStyle = "#8d5b2d";
+        ctx.beginPath();
+        ctx.arc(0, -22 * s, 10 * s, 0, Math.PI * 2);
+        ctx.fill();
+        // Fedora
+        ctx.fillStyle = "#472c14";
+        ctx.fillRect(-12 * s, -34 * s, 24 * s, 4 * s);
+        ctx.fillRect(-8 * s, -40 * s, 16 * s, 6 * s);
       } else {
-        // --- Running Explorer (Clear silhouette with Fedora & Backpack) ---
-        const hipY = (-24 + bob) * scale;
-        const shoulderY = (-46 + bob) * scale;
-        const headY = (-58 + bob) * scale;
+        // Running pose
+        const hipY = -18 * s;
+        const shY = -34 * s;
+        const headY = -44 * s;
 
-        // Khaki Legs
-        ctx.strokeStyle = "#d4b27b";
-        ctx.lineWidth = 5 * scale;
+        // Legs
+        ctx.strokeStyle = "#d1b48c";
+        ctx.lineWidth = 4.5 * s;
         ctx.lineCap = "round";
 
-        // Left Leg
         ctx.beginPath();
-        ctx.moveTo(-6 * scale, hipY);
-        ctx.lineTo(-8 * scale, hipY + 12 * scale + legSwing * 5 * scale);
-        ctx.lineTo(-6 * scale + legSwing * 7 * scale, Math.min(0, hipY + 24 * scale + legSwing * 8 * scale));
+        ctx.moveTo(-5 * s, hipY);
+        ctx.lineTo(-6 * s, hipY + 9 * s + swing * 4 * s);
+        ctx.lineTo(-5 * s + swing * 5 * s, Math.min(0, hipY + 18 * s + swing * 6 * s));
         ctx.stroke();
 
-        // Right Leg
         ctx.beginPath();
-        ctx.moveTo(6 * scale, hipY);
-        ctx.lineTo(8 * scale, hipY + 12 * scale - legSwing * 5 * scale);
-        ctx.lineTo(6 * scale - legSwing * 7 * scale, Math.min(0, hipY + 24 * scale - legSwing * 8 * scale));
+        ctx.moveTo(5 * s, hipY);
+        ctx.lineTo(6 * s, hipY + 9 * s - swing * 4 * s);
+        ctx.lineTo(5 * s - swing * 5 * s, Math.min(0, hipY + 18 * s - swing * 6 * s));
         ctx.stroke();
 
-        // Leather Torso
-        ctx.fillStyle = "#8a572a";
+        // Leather Jacket Torso
+        ctx.fillStyle = "#8d5b2d";
         ctx.beginPath();
-        ctx.moveTo(-11 * scale, shoulderY);
-        ctx.lineTo(11 * scale, shoulderY);
-        ctx.lineTo(7 * scale, hipY);
-        ctx.lineTo(-7 * scale, hipY);
+        ctx.moveTo(-9 * s, shY);
+        ctx.lineTo(9 * s, shY);
+        ctx.lineTo(6 * s, hipY);
+        ctx.lineTo(-6 * s, hipY);
         ctx.closePath();
         ctx.fill();
 
-        // Adventurer Backpack
-        ctx.fillStyle = "#5c3818";
-        ctx.fillRect(-7 * scale, shoulderY + 4 * scale, 14 * scale, 12 * scale);
-
-        // Arms swinging
-        ctx.strokeStyle = "#8a572a";
-        ctx.beginPath();
-        ctx.moveTo(-11 * scale, shoulderY);
-        ctx.lineTo(-15 * scale, shoulderY + 15 * scale - legSwing * 7 * scale);
-        ctx.stroke();
-
-        ctx.beginPath();
-        ctx.moveTo(11 * scale, shoulderY);
-        ctx.lineTo(15 * scale, shoulderY + 15 * scale + legSwing * 7 * scale);
-        ctx.stroke();
+        // Backpack
+        ctx.fillStyle = "#553216";
+        ctx.fillRect(-6 * s, shY + 3 * s, 12 * s, 9 * s);
 
         // Head
-        ctx.fillStyle = "#e6b98d";
+        ctx.fillStyle = "#e3b888";
         ctx.beginPath();
-        ctx.arc(0, headY, 6.5 * scale, 0, Math.PI * 2);
+        ctx.arc(0, headY, 5.5 * s, 0, Math.PI * 2);
         ctx.fill();
 
-        // Fedora (Brown Adventurer Hat)
-        ctx.fillStyle = "#4a2c11";
-        ctx.fillRect(-15 * scale, headY - 3 * scale, 30 * scale, 4 * scale); // Brim
-        ctx.fillRect(-9 * scale, headY - 11 * scale, 18 * scale, 8 * scale);  // Crown
+        // Fedora
+        ctx.fillStyle = "#472c14";
+        ctx.fillRect(-13 * s, headY - 2 * s, 26 * s, 3.5 * s);
+        ctx.fillRect(-7 * s, headY - 9 * s, 14 * s, 7 * s);
       }
 
       ctx.restore();
     }
 
-    // --- RENDER PIPELINE ---
     function render() {
-      if (width <= 0 || height <= 0) resize();
-
-      ctx.clearRect(0, 0, width, height);
-
-      const horizonY = height * HORIZON_RATIO;
-
-      // Temple Jungle Canopy & Sunset
-      const bgGrad = ctx.createLinearGradient(0, 0, 0, horizonY);
-      bgGrad.addColorStop(0, "#0e180e");
-      bgGrad.addColorStop(0.7, "#28170c");
-      bgGrad.addColorStop(1, "#522b10");
-      ctx.fillStyle = bgGrad;
+      // Background Sky & Jungle
+      const horizonY = height * 0.35;
+      ctx.fillStyle = "#261309";
       ctx.fillRect(0, 0, width, horizonY);
 
-      // Distant Temple Silhouette Sun
-      ctx.fillStyle = "#ff8c1a";
+      // Distant Sun
+      ctx.fillStyle = "#ff841f";
       ctx.beginPath();
-      ctx.arc(width / 2, horizonY, 55, Math.PI, 0);
+      ctx.arc(width / 2, horizonY, 48, Math.PI, 0);
       ctx.fill();
 
-      // Deep Ruin Abyss (Ground sides)
-      ctx.fillStyle = "#120804";
+      // Ruin chasm (floor sides)
+      ctx.fillStyle = "#120803";
       ctx.fillRect(0, horizonY, width, height - horizonY);
 
-      // Stone Bridge Pathway (Temple Floor)
-      const pTrackFarL = project(-1.6 * player.laneWidth, 0, 3600);
-      const pTrackFarR = project(1.6 * player.laneWidth, 0, 3600);
-      const pTrackNearL = project(-1.6 * player.laneWidth, 0, 80);
-      const pTrackNearR = project(1.6 * player.laneWidth, 0, 80);
+      // Stone Path Track
+      const pFarL = project(-1.5 * 90, 0, 3200);
+      const pFarR = project(1.5 * 90, 0, 3200);
+      const pNearL = project(-1.5 * 90, 0, 70);
+      const pNearR = project(1.5 * 90, 0, 70);
 
-      // Ancient Stone Floor Fill
-      ctx.fillStyle = "#2d231b";
+      ctx.fillStyle = "#3a2d22";
       ctx.beginPath();
-      ctx.moveTo(pTrackFarL.x, pTrackFarL.y);
-      ctx.lineTo(pTrackFarR.x, pTrackFarR.y);
-      ctx.lineTo(pTrackNearR.x, pTrackNearR.y);
-      ctx.lineTo(pTrackNearL.x, pTrackNearL.y);
+      ctx.moveTo(pFarL.x, pFarL.y);
+      ctx.lineTo(pFarR.x, pFarR.y);
+      ctx.lineTo(pNearR.x, pNearR.y);
+      ctx.lineTo(pNearL.x, pNearL.y);
       ctx.closePath();
       ctx.fill();
 
-      // Stone Carved Edge Borders (Left & Right parapets)
-      ctx.strokeStyle = "#825d3b";
-      ctx.lineWidth = 4;
+      // Borders
+      ctx.strokeStyle = "#946f48";
+      ctx.lineWidth = 3;
       ctx.beginPath();
-      ctx.moveTo(pTrackFarL.x, pTrackFarL.y);
-      ctx.lineTo(pTrackNearL.x, pTrackNearL.y);
-      ctx.moveTo(pTrackFarR.x, pTrackFarR.y);
-      ctx.lineTo(pTrackNearR.x, pTrackNearR.y);
+      ctx.moveTo(pFarL.x, pFarL.y);
+      ctx.lineTo(pNearL.x, pNearL.y);
+      ctx.moveTo(pFarR.x, pFarR.y);
+      ctx.lineTo(pNearR.x, pNearR.y);
       ctx.stroke();
 
-      // Stone Tile Seams
+      // Stone lines
       const tileSpacing = 140;
-      const offset = score % tileSpacing;
-      for (let z = 3600; z > 80; z -= tileSpacing) {
-        const actualZ = z - offset;
-        if (actualZ <= 80) continue;
-        const pLeft = project(-1.6 * player.laneWidth, 0, actualZ);
-        const pRight = project(1.6 * player.laneWidth, 0, actualZ);
-        const alpha = Math.max(0.1, 1 - actualZ / 3000);
-        ctx.strokeStyle = `rgba(18, 12, 8, ${alpha})`;
+      const off = score % tileSpacing;
+      for (let z = 3200; z > 70; z -= tileSpacing) {
+        const curZ = z - off;
+        if (curZ <= 70) continue;
+        const l = project(-1.5 * 90, 0, curZ);
+        const r = project(1.5 * 90, 0, curZ);
+        ctx.strokeStyle = "rgba(18, 12, 6, 0.5)";
         ctx.lineWidth = 2;
         ctx.beginPath();
-        ctx.moveTo(pLeft.x, pLeft.y);
-        ctx.lineTo(pRight.x, pRight.y);
+        ctx.moveTo(l.x, l.y);
+        ctx.lineTo(r.x, r.y);
         ctx.stroke();
       }
 
-      // Sort Obstacles & Coins back to front
-      const items = [
-        ...obstacles.map(o => ({ ...o, rType: "obs" })),
-        ...coinPickups.filter(c => !c.collected).map(c => ({ ...c, rType: "coin" }))
+      // Draw items (obstacles + coins)
+      const allItems = [
+        ...obstacles.map(o => ({ ...o, isCoin: false })),
+        ...coinList.filter(c => !c.taken).map(c => ({ ...c, isCoin: true }))
       ].sort((a, b) => b.z - a.z);
 
-      for (let i = 0; i < items.length; i++) {
-        const item = items[i];
-        const xPos = item.lane * player.laneWidth;
+      for (let i = 0; i < allItems.length; i++) {
+        const it = allItems[i];
+        const xPos = it.lane * 90;
 
-        if (item.rType === "coin") {
-          const p = project(xPos, 28 + Math.sin(score * 0.05 + item.z) * 6, item.z);
-          // Spinning gold coin
-          const spinScale = Math.abs(Math.cos(score * 0.05 + item.z * 0.02));
+        if (it.isCoin) {
+          const p = project(xPos, 22, it.z);
           ctx.fillStyle = "#ffcc00";
           ctx.beginPath();
-          ctx.ellipse(p.x, p.y, Math.max(2, 13 * p.scale * spinScale), Math.max(2, 13 * p.scale), 0, 0, Math.PI * 2);
+          ctx.arc(p.x, p.y, Math.max(2, 10 * p.scale), 0, Math.PI * 2);
           ctx.fill();
-          ctx.strokeStyle = "#ffe680";
-          ctx.lineWidth = 1.5;
-          ctx.stroke();
-        } else if (item.rType === "obs") {
-          const p = project(xPos, item.y, item.z);
-          const w = item.w * p.scale;
-          const h = item.h * p.scale;
+        } else {
+          const p = project(xPos, 0, it.z);
+          const w = 68 * p.scale;
 
-          if (item.type === "log") {
-            // Broken Tree Trunk Barrier (JUMP OVER)
-            ctx.fillStyle = "#4a2e18";
+          if (it.type === "log") {
+            const h = 34 * p.scale;
+            ctx.fillStyle = "#5c3418";
             ctx.fillRect(p.x - w / 2, p.y - h, w, h);
-            ctx.fillStyle = "#331e0f";
-            ctx.fillRect(p.x - w / 2 + 4, p.y - h + 4, w - 8, h - 8);
-            // Red warning band
-            ctx.fillStyle = "#cc3300";
-            ctx.fillRect(p.x - w / 2, p.y - h - 3, w, 4);
+            ctx.fillStyle = "#e03e1b";
+            ctx.fillRect(p.x - w / 2, p.y - h, w, 4 * p.scale);
           } else {
-            // Temple Stone Arch with Flaming Fire (SLIDE UNDER)
-            ctx.fillStyle = "#3d2b1f";
-            ctx.fillRect(p.x - w / 2, p.y - h, w, h * 0.35); // top lintel
-            // Pillars
-            ctx.fillRect(p.x - w / 2, p.y - h, 8 * p.scale, h);
-            ctx.fillRect(p.x + w / 2 - 8 * p.scale, p.y - h, 8 * p.scale, h);
-            // Fire flames under arch
-            ctx.fillStyle = "#ff6600";
-            ctx.fillRect(p.x - w / 2 + 6, p.y - h + h * 0.3, w - 12, 8
+            const h = 64 * p.scale;
+            ctx.fillStyle = "#3b2c21";
+            ctx.fillRect(p.x - w / 2, p.y - h, w, 12 * p.scale); // Top arch
+            ctx.fillRect(p.x - w / 2, p.y - h, 6 * p.scale, h);    // Left pillar
+            ctx.fillRect(p.x + w / 2 - 6 * p.scale, p.y - h, 6 * p.scale, h); // Right pillar
+            ctx.fillStyle = "#ff5500";
+            ctx.fillRect(p.x - w / 2 + 5 * p.scale, p.y - h + 10 * p.scale, w - 10 * p.scale, 8 * p.scale); // Fire
+          }
+        }
+      }
+
+      // Draw Explorer at camera depth Z=140
+      const pPlayer = project(player.x, player.y, 140);
+      drawExplorer(pPlayer.x, pPlayer.y, pPlayer.scale);
+
+      // HUD Text
+      if (state === "play") {
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "bold 20px sans-serif";
+        ctx.textAlign = "left";
+        ctx.fillText(`${Math.floor(score / 10)}m`, 20, 36);
+
+        ctx.fillStyle = "#ffc107";
+        ctx.font = "bold 16px sans-serif";
+        ctx.fillText(`Coins: ${coins}`, 20, 60);
+      } else if (state === "menu") {
+        ctx.fillStyle = "#ffb03b";
+        ctx.font = "bold 28px sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText("TEMPLE ESCAPE", width / 2, height * 0.28);
+
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "bold 15px sans-serif";
+        ctx.fillText("USE BUTTONS OR SWIPE TO MOVE", width / 2, height * 0.34);
+
+        ctx.fillStyle = "#22c55e";
+        ctx.font = "bold 18px sans-serif";
+        ctx.fillText("▶ TAP TO START", width / 2, height * 0.42);
+      } else if (state === "dead") {
+        ctx.fillStyle = "#ef4444";
+        ctx.font = "bold 32px sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText("GAME OVER", width / 2, height * 0.28);
+
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "bold 16px sans-serif";
+        ctx.fillText(`Distance: ${Math.floor(score / 10)}m | Coins: ${coins}`, width / 2, height * 0.34);
+        ctx.fillText(`Best: ${highScore}m`, width / 2, height * 0.39);
+
+        ctx.fillStyle = "#ffb03b";
+        ctx.font = "bold 16px sans-serif";
+        ctx.fillText("TAP TO RETRY", width / 2, height * 0.46);
+      }
+
+      update();
+      requestAnimationFrame(render);
+    }
+
+    // Initialize and loop immediately
+    resetGame();
+    requestAnimationFrame(render);
+  </script>
+</body>
+</html>
